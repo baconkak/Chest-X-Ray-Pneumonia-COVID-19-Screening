@@ -1,0 +1,31 @@
+# Data, credentials and training artifacts
+data/
+outputs/
+checkpoints/
+artifacts/
+*.pt
+*.pth
+*.ckpt
+*.zip
+*.tar
+*.tar.gz
+*.png
+*.jpg
+*.jpeg
+kaggle.json
+.env
+.env.*
+!.env.example
+*credentials*.json
+*token*.json
+# Local tools / extracted private course material
+.local_deps/
+.local_notes/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db

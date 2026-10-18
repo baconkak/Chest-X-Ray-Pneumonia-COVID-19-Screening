@@ -1,0 +1,28 @@
+Software verification — 18 October 2026
+======================================
+
+Command: python -m unittest discover -s tests -v
+Result: 7 tests passed, including CUDA AMP and the offline notebook workflow.
+Tests use generated random PNG images and synthetic metadata, not NIH patient images.
+No test score is a medical performance estimate.
+
+Coverage:
+- All three model output contracts, finite Grad-CAM, valid notebook schema/Python syntax.
+- NIH-style label parsing, patient-disjoint grouped/official partitions, incomplete data rejection.
+- Validation threshold rule, confusion counts, undefined metric handling, paired patient bootstrap.
+- Offline execution of actual notebook audit, training, selection, final evaluation and inference cells.
+- CPU uninterrupted versus simulated interrupted/resumed training: identical selected model and metrics.
+- Validation leaves model parameters and BatchNorm buffers unchanged.
+- Optional CUDA mixed-precision training smoke test for all three models (skipped without CUDA).
+
+Verified local environment:
+Python 3.13; PyTorch 2.13.0+cu126; torchvision 0.28.0+cu126;
+pandas 2.3.3; scikit-learn 1.9.1; NumPy 2.5.4.
+GPU smoke test: NVIDIA GeForce GTX 1650 Ti.
+Runtime packages used for local verification are ignored under .local_deps/.
+
+Not verified here:
+- Full NIH image download, real-label training, pretrained weight download, live Colab/Drive authentication.
+- Real-data accuracy, AP, recall, calibration, external clinical validity, COVID-19 detection.
+The provided notebook performs those data/training steps in the user's Colab session.
+No dataset, credentials, instructor PDFs, checkpoints or synthetic result files are published.

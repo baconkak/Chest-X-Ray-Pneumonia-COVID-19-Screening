@@ -1,0 +1,537 @@
+รายงานโครงงาน Deep Learning
+Chest X-ray Pneumonia Screening และการวิเคราะห์ขอบเขต COVID-19
+==============================================================
+ระดับ: วิศวกรรมคอมพิวเตอร์ ปี 3 เทอม 1
+ฉบับวิธีดำเนินงานและแผนการทดลอง — 18 ตุลาคม 2569
+สถานะ: จัดทำระบบทดลองแล้ว ยังไม่ได้ฝึกและประเมินด้วย dataset จริง
+ชื่อผู้จัดทำ/รหัสนักศึกษา/รายวิชา: เติมข้อมูลจริงก่อนส่ง
+
+บทคัดย่อ
+---------
+โครงงานนี้ออกแบบการจำแนกภาพเอกซเรย์ทรวงอกจาก NIH ChestX-ray14
+เพื่อทำนายการมี label Pneumonia โดยเปรียบเทียบ MLP ที่เชื่อมโยงกับบทเรียน
+feedforward neural network, CNN ขนาดเล็ก และ ResNet18 ที่ใช้ transfer learning
+ระบบใช้ binary cross-entropy จาก logits และปรับน้ำหนัก positive จาก training
+แบ่งข้อมูลตามผู้ป่วยเพื่อป้องกันข้อมูลคนเดียวกันข้ามชุด ประเมินด้วย Average
+Precision เป็นหลัก และพิจารณา recall, precision, AUROC, confusion matrix,
+calibration และความไม่แน่นอนของผลควบคู่กัน
+
+ชื่อหัวข้อจากอาจารย์มี COVID-19 แต่ dataset ที่กำหนดไม่มี label นี้
+จึงไม่สามารถอ้างว่าโมเดลที่ฝึกจากชุดนี้ตรวจ COVID-19 ได้ โครงงานคงแหล่งข้อมูล
+ที่อาจารย์เลือกและระบุช่องว่างของข้อมูลอย่างชัดเจน แทนการสร้าง label โดยไม่มีหลักฐาน
+รายงานฉบับนี้อธิบายวิธีที่นำไปทดลองได้ ส่วนผลเชิงตัวเลขต้องเติมจากการรันจริง
+ไม่มีการนำคะแนนจากงานวิจัยอื่นหรือข้อมูลสังเคราะห์มาแทนผลของโครงงาน
+
+1. ที่มา วัตถุประสงค์ และขอบเขต
+-------------------------------
+ภาพเอกซเรย์เป็นข้อมูลมิติสูง ความเข้มและตำแหน่งลวดลายสัมพันธ์กันเชิงพื้นที่
+การออกแบบกฎจากพิกเซลโดยตรงทำได้ยาก จึงเหมาะสำหรับศึกษาการเรียนรู้ representation
+แต่ความสามารถของ neural network ไม่ใช่เหตุผลเพียงพอที่จะสรุปว่าระบบใช้งานทางคลินิกได้
+ต้องมี baseline, ขอบเขตข้อมูล และ evaluation protocol ที่ตรวจสอบได้
+
+วัตถุประสงค์:
+  (1) สร้าง pipeline ที่ฝึกซ้ำบน Google Colab ได้และกลับมาฝึกต่อได้
+  (2) นำความรู้เรื่อง tensor, loss, backprop, optimization และ generalization มาใช้จริง
+  (3) เปรียบเทียบ dense network กับ convolution และ pretrained residual network
+  (4) แสดงว่า imbalance, leakage และ threshold ส่งผลต่อการอ่านผลอย่างไร
+  (5) แยกสิ่งที่ dataset รองรับออกจากคำอ้างที่ยังไม่มีข้อมูลยืนยัน
+
+Problem statement ตามบท 1:
+Given: ภาพ frontal chest X-ray หนึ่งภาพที่มี metadata สำหรับแบ่งผู้ป่วย
+Predict: label Pneumonia ปรากฏหรือไม่ปรากฏใน annotation ของ NIH
+Sample: ภาพหนึ่งภาพ; grouping unit: ผู้ป่วยหนึ่งคน
+Input ตอน inference: ภาพเท่านั้น ไม่ส่ง Patient ID, Finding Labels หรือ follow-up เข้าโมเดล
+Output: หนึ่ง logit แล้วแปลงเป็น score ด้วย sigmoid
+Evaluation: ผู้ป่วยที่แยกจาก training ใน NIH dataset ตาม protocol ที่ประกาศ
+Purpose: โครงงานการศึกษาเรื่องการจัดลำดับภาพเพื่อทบทวน ไม่ใช่ตัดสินรักษาหรือวินิจฉัย
+
+2. ข้อมูลและความหมายของ label
+-----------------------------
+ใช้ NIH ChestX-ray14 จาก NIH Clinical Center ผ่านแหล่ง NIH หรือ Kaggle ที่อาจารย์ระบุ [1–3]
+ChestX-ray14 เป็นชุดปรับปรุงจาก ChestX-ray8 มีภาพประมาณ 112,120 ภาพ
+จากผู้ป่วยประมาณ 30,805 คน และ 14 thoracic findings
+จำนวนที่ใช้งานจริงต้องอ้าง data_audit.json ไม่สมมติว่าดาวน์โหลดครบ
+
+Label vocabulary:
+Atelectasis, Cardiomegaly, Effusion, Infiltration, Mass, Nodule, Pneumonia,
+Pneumothorax, Consolidation, Edema, Emphysema, Fibrosis, Pleural_Thickening,
+Hernia และค่า No Finding
+
+ภาพหนึ่งมีหลาย label ได้ เช่น Pneumonia|Effusion
+โจทย์ต้นฉบับเป็น multilabel แต่โครงงานนี้ทำ binary target เฉพาะ Pneumonia:
+  y = 1 ถ้า token "Pneumonia" อยู่ในชุด Finding Labels
+  y = 0 ถ้าไม่มี token นั้น ไม่ว่ามี finding อื่นหรือไม่
+การแยก token ด้วย | ป้องกันการจับข้อความคล้ายกันโดยไม่ตั้งใจ
+ไม่กรองเหลือเฉพาะ Pneumonia กับ No Finding เพราะจะทำให้โจทย์ง่ายขึ้นและเปลี่ยนประชากร
+
+ข้อควรระวัง:
+  - Annotation ถูกสกัดจากรายงานทางรังสี ไม่ใช่ผลยืนยันเชื้อหรือ adjudication ทุกภาพ
+  - label ที่ไม่ปรากฏอาจเกี่ยวกับการรายงานหรือความคลาดเคลื่อน ไม่ใช่หลักฐานการไม่มีโรคแน่นอน
+  - No Finding ไม่เท่ากับการตรวจยืนยันว่าปลอดโรคทุกชนิด
+  - ไม่มี COVID-19 ใน original vocabulary จึงไม่สร้าง target COVID จาก opacity หรือ Pneumonia
+  - ไม่ผสม COVID images จากคนละแหล่งโดยถือว่ามี label และ distribution เทียบกันได้ทันที
+
+Data audit ตรวจ metadata ที่จำเป็น, null, label ที่ไม่รู้จัก, No Finding ที่ขัดกับ label อื่น,
+Image Index ซ้ำ, PNG ชื่อซ้ำ, ภาพขาด และภาพเสีย
+บันทึก metadata SHA-256, dataset version path, split manifest, seed และ code commit
+การตรวจ ID ยังไม่รับประกันว่าไม่มีภาพซ้ำที่เปลี่ยนชื่อหรือ near-duplicate ข้ามผู้ป่วย
+การนำไปศึกษาต่อควรเพิ่ม content hashing/perceptual duplicate review ก่อนอ้างความแม่นยำ
+
+3. การเชื่อมกับเอกสารเรียนทั้ง 6 บท
+----------------------------------
+อ่านจาก D:\AllStudy\DeepLearning\Sheet ก่อนออกแบบโครงงาน
+อ้างเลขหน้าด้านล่างตามลำดับหน้า PDF (บางบทเลข slide ที่พิมพ์ไม่ตรงกับหน้า PDF)
+เอกสารทั้งหมดเป็นของผู้สอน Vasin Suttichaya, Mahidol University
+ไม่เผยแพร่ไฟล์สไลด์หรือข้อความฉบับเต็มใน repository
+
+บท 1: Introduction to Deep Learning and the Machine Learning Workflow (49 หน้า)
+  หน้า 10–18: problem statement / intended use → กำหนด image, patient, label และขอบเขต
+  หน้า 26–34: partitions/leakage → patient-disjoint split และบันทึก manifest
+  หน้า 35–41: baseline/loss vs metric → majority baseline และแยก BCE ออกจาก AP
+  นี่ไม่ใช่การเพิ่มเทคนิคใหม่เพื่อทิ้งบทเรียน แต่ใช้หลักการของบทแรกเป็นแกน
+
+บท 2: Linear Algebra (45 หน้า)
+  หน้า 4–6, 13: shapes/matrix multiplication → ตรวจ [B,3,H,W] และ [B,1]
+  หน้า 42–45: gradient/curvature → loss เป็น scalar และ gradient รูปร่างตรง parameter
+  final linear layer: Z = H W^T + b; CNN ก็เป็น linear operation ที่มีโครงสร้างและแชร์น้ำหนัก
+
+บท 3: Feedforward Neural Networks and Loss Functions (54 หน้า)
+  หน้า 4–16: affine/ReLU/MLP/parameter count → ใช้ MLP เป็น baseline ที่เรียนแล้ว
+  หน้า 28–33: binary/multiclass/multilabel → หนึ่ง logit กับ target float [B,1]
+  หน้า 39–43: BCE, stable logits, class weighting → BCEWithLogitsLoss และ pos_weight
+  ดังนั้นการใช้ BCE แทน CE ไม่ใช่เทคนิคที่ใหม่กว่าบทเรียน แต่เลือกตาม target ให้ถูกต้อง
+
+บท 4: Backpropagation and Gradient-Based Optimization (62 หน้า)
+  หน้า 4–6: clear gradients → forward → loss → backward → optimizer.step
+  หน้า 34–40: SGD/momentum/Adam และ optimizer state → AdamW และ checkpoint สถานะครบ
+  หน้า 51–62: training-loop engineering → sample-weighted loss, mode, finite checks, logging
+  การมี checkpoint ไม่พอถ้าเซฟเฉพาะ weights; ต้องมี optimizer และ RNG เพื่อ resume
+
+บท 5: Model Evaluation and Training Diagnostics (53 หน้า)
+  หน้า 11–17: independent holdout → test ใช้หลังล็อกการเลือกทั้งหมด
+  หน้า 19–26: confusion matrix, ROC, AP → เน้น AP เพราะ positive พบไม่บ่อย
+  หน้า 34–39: thresholds → เลือกจาก validation แล้วใช้ค่าเดิมบน test
+  หน้า 41–47: calibration/bootstrap/repeated runs → reliability, Brier และ patient bootstrap
+  หน้า 49–53: curves/slices/error analysis → กราฟ, AP/PA slices และไฟล์ FP/FN
+
+บท 6: Generalization, Regularization, and Hyperparameter Tuning (30 หน้า)
+  หน้า 8–10: penalties/decoupled decay → AdamW weight decay ไม่ใช่ Adam+L2 ที่เหมือนกันเสมอ
+  หน้า 12–18: dropout/early stopping → train/eval mode และ restore best checkpoint
+  หน้า 20–25: normalization/augmentation → fixed ImageNet normalization, train-only augmentation
+  หน้า 27–30: bounded tuning → เปรียบเทียบจำนวน trial จำกัด ไม่ค้นจาก test
+
+ส่วนที่ขยายจากบทเรียน:
+CNN locality/weight sharing, residual connection, ImageNet transfer learning,
+fine-tuning บาง block, CUDA mixed precision และ Grad-CAM
+ข้อได้เปรียบเหล่านี้เป็นสมมติฐานเชิงสถาปัตยกรรม/ประสิทธิภาพ ไม่ใช่ผลชนะที่พิสูจน์แล้ว
+ต้องดูผล validation/test ภายใต้ protocol เดียวกัน
+
+4. การแบ่งข้อมูลเพื่อป้องกัน leakage
+------------------------------------
+ถ้าภาพ follow-up ของคนเดียวกันอยู่ทั้ง train/test โมเดลอาจจำลักษณะเฉพาะผู้ป่วย
+แทนการเรียนรู้ pattern ที่ใช้กับผู้ป่วยใหม่ได้ การ shuffle รายภาพจึงไม่พอ
+
+quick profile:
+  สุ่มผู้ป่วยไม่เกิน 3,000 คนด้วย seed 42 จากผู้ป่วยที่มีภาพอยู่จริง
+  เลือกผู้ป่วยโดยไม่ re-balance test และเก็บภาพที่มีของผู้ป่วยที่เลือก
+  แบ่ง dev/test ที่ระดับผู้ป่วย 85/15 แล้วแบ่ง val จาก dev เป็น 15/85
+  โดยรวมประมาณ train/val/test = 70/15/15 ของผู้ป่วย ไม่รับประกันสัดส่วนภาพเท่ากัน
+  stratify ด้วยการมีอย่างน้อยหนึ่ง positive image ต่อผู้ป่วย
+  หากใช้ภาพจากบาง archive ผลสะท้อน subset นั้นเท่านั้น
+
+full profile:
+  ใช้ official train_val_list.txt และ test_list.txt
+  ภายใน development แบ่ง validation 20% ของผู้ป่วยด้วย stratification แบบเดียวกัน
+  ไม่กำหนด max_patients และไม่อนุญาตภาพขาด
+  ตรวจ patient overlap แม้ใช้ official lists ไม่เชื่อรายการโดยไม่ตรวจ
+  หากพบ overlap หรือไฟล์ไม่ครบจะหยุด ไม่ fallback ไปใช้ random image split
+
+ทุก protocol บันทึก train.csv, val.csv, test.csv, summary และ split hash
+fit น้ำหนัก class จาก training เท่านั้น ไม่ใช้ label ของ test เลือก hyperparameter
+test labels ใช้ในการ stratify เพื่อกำหนด holdout ล่วงหน้าและ audit support ได้
+แต่ไม่ถูกใช้ใน gradient, threshold หรือ checkpoint/model selection
+
+ผลหลักเป็น image-level metrics จึงให้น้ำหนักผู้ป่วยที่มีภาพมากกว่าโดยธรรมชาติ
+ใช้ patient-group bootstrap เพื่อคง dependency แต่ไม่ได้เปลี่ยน metric เป็น patient-level
+หากต้องการอ้างผลต่อผู้ป่วยต้องกำหนดวิธีรวมภาพ/เวลาและออกแบบ evaluation ใหม่
+
+5. การเตรียมภาพและ augmentation
+--------------------------------
+Input: ภาพ grayscale PNG → convert RGB ซ้ำช่อง → pad เป็นสี่เหลี่ยม → resize 224×224
+→ training-only RandomAffine หมุน ±5°/เลื่อน ±2% → tensor → ImageNet normalization
+validation/test ใช้ขั้นตอน deterministic และไม่มี random transform
+
+เหตุผล:
+  - Padding เก็บ field of view ครบกว่า crop ซึ่งอาจตัดบริเวณปอด
+  - 224×224 ลด VRAM/เวลาฝึกบน Colab แต่รายละเอียดเล็กอาจสูญหาย
+  - RGB replication ทำให้ใช้ conv แรกของ ImageNet model ได้ ไม่ได้สร้างข้อมูลสีใหม่
+  - ค่าคงที่ mean=[.485,.456,.406], std=[.229,.224,.225] มาจาก pretraining
+    ไม่คำนวณจาก test จึงไม่ใช่ preprocessing leakage แต่ยังมี domain mismatch กับ X-ray
+  - ไม่กลับซ้ายขวาหรือ crop แรง ๆ เพราะอาจเปลี่ยน anatomy/ทำลายหลักฐานที่ต้องใช้
+  - การหมุน/เลื่อนเล็กน้อยเป็นสมมติฐาน invariance ที่ต้องดูตัวอย่างภาพจริงก่อนยอมรับ
+
+MLP รับผล pipeline เดียวกัน แต่เฉลี่ยช่องสีที่ normalize แล้วและ adaptive pool เป็น 64×64
+นี่เป็น representation แบบลดความละเอียดเพื่อให้ dense network ใช้ทรัพยากรเหมาะสม
+ไม่ใช่ grayscale intensity ดิบโดยตรง และทำให้การเทียบ MLP กับ CNN รวมผลของ resolution ด้วย
+ถ้าต้องการแยกผลสถาปัตยกรรมล้วน ให้ทดลอง CNN ที่ 64×64 หรือ MLP ที่ resolution เท่ากันเพิ่มเติม
+
+6. โมเดลและเหตุผลในการเลือก
+----------------------------
+6.1 Majority / constant baseline
+ใช้ prevalence จาก training เป็น score คงที่ทุกภาพ และตัดสินที่ 0.5
+ถ้า majority เป็น negative จะได้ recall=0 สำหรับ positive แม้ accuracy สูง
+AP ของคะแนนคงที่สัมพันธ์กับ prevalence ของชุดประเมิน เป็นเส้นอ้างอิงแบบ no ranking skill
+baseline ไม่ใช้ test เพื่อเลือก class หรือ score
+
+6.2 MLP: เนื้อหาที่เรียนแล้ว
+รูปทรง: [B,3,224,224] → channel mean → [B,1,64,64]
+→ Flatten 4096 → Linear 128 → ReLU → Dropout(0.3) → Linear 1
+จำนวน parameter: 128(4096+1) + 1(128+1) = 524,545
+ใช้ He initialization สำหรับ hidden ReLU, Xavier สำหรับ output logit และ bias ศูนย์
+ReLU ทำให้ affine layers ไม่ยุบเป็น affine layer เดียว
+
+MLP เป็นตัวเทียบที่อ่านสมการได้ตรงกับบทเรียน แต่ flatten ทำให้ความสัมพันธ์เชิงพื้นที่
+ไม่ได้ถูกบังคับในสถาปัตยกรรม และ dense weights ไม่แชร์ข้ามตำแหน่ง
+ถ้าใช้ 224×224 grayscale โดยตรง hidden 128 ต้องมี 6,422,785 parameters รวม output
+การลดขนาดทำให้ baseline ฝึกง่ายขึ้น แต่เสียรายละเอียด จึงต้องเปิดเผย tradeoff นี้
+
+6.3 Small CNN: เรียน representation จากข้อมูลชุดนี้
+Conv3×3(3→16) → BatchNorm → ReLU → MaxPool
+Conv3×3(16→32) → BatchNorm → ReLU → MaxPool
+Conv3×3(32→64) → BatchNorm → ReLU → MaxPool
+→ AdaptiveAvgPool 1×1 → Flatten → Dropout(0.3) → Linear(64→1)
+จำนวน parameter 23,761; output shape [B,1]
+
+Convolution ใช้ filter มองบริเวณใกล้กันและแชร์น้ำหนักทั่วภาพ
+เช่น conv 3→16 ขนาด 3×3 แบบไม่มี bias ใช้น้ำหนัก 3×16×3×3=432
+จำนวนไม่เพิ่มตามทุกพิกเซลแบบ dense layer จึงเหมาะกับ image structure และมี inductive bias
+BatchNorm ช่วยควบคุม activation statistics; eval ใช้ running mean/variance ที่ฝึกไว้
+Global average pooling ลด parameter ก่อน classifier แต่ representation ยังอาจไม่พอสำหรับ label ที่ยาก
+CNN เล็กไม่ได้มีความสามารถเท่ากับโมเดล pretrained เพียงเพราะเป็น convolution
+
+6.4 ResNet18 + transfer learning
+ใช้ ResNet18 pretrained บน ImageNet ของ torchvision [4–5]
+แทน classifier เดิมด้วย Dropout(0.3) → Linear(512→1)
+จำนวน parameter หลังแทน classifierประมาณ 11.18 ล้าน (ให้ run.json เป็นค่าจริงของ implementation)
+Residual block ใช้แนวคิด h=ReLU(F(x)+x) เมื่อ shape ตรงกัน และใช้ projection เมื่อจำเป็น
+เส้นทาง identity ช่วยส่งสัญญาณ/gradient และทำให้เรียน residual correction ได้
+ไม่ควรอธิบายว่า residual แก้ vanishing gradient ทุกกรณี
+
+Transfer learning ให้จุดเริ่มต้นที่รู้ edge/texture และ feature hierarchy บางส่วนแล้ว
+อาจลดข้อมูลและเวลาที่ต้องใช้เทียบกับ train network เดียวกันจากศูนย์
+แต่ ImageNet ไม่ใช่ chest radiograph; จำนวน parameter รวมมากกว่า SmallCNN
+จึงอาจไม่ชนะเมื่อข้อมูลไม่เหมาะหรือ fine-tune ไม่ดี และต้องวัดจริง
+
+กำหนดสองช่วง:
+  epoch 1–2: freeze backbone ฝึกเฉพาะ head ด้วย lr=1e-3
+  epoch 3–8: ปลด layer4 กับ head ด้วย lr=1e-4
+  คง BatchNorm running statistics ของ pretrained model ทุกช่วง เพื่อลดการ drift จาก batch เล็ก
+  BN affine parameters ใน layer4 ปลดในช่วง fine-tune แต่ running statistics ยัง fixed
+  เริ่ม optimizer/scheduler ใหม่เมื่อเปลี่ยน stage เป็นการออกแบบที่บันทึกไว้ ไม่ใช่ resume history เดิม
+  เลือก best checkpoint ข้ามทุกช่วงด้วย validation AP; ถ้า head-only ดีที่สุดก็คืน checkpoint นั้น
+
+ไม่ได้ใช้ DenseNet121/CheXNet เป็นค่าเริ่มต้น เพราะ ResNet18 เป็นจุดเริ่มที่จัดการทรัพยากรง่าย
+และสามารถอธิบาย residual block ได้ชัดเจน ไม่ได้หมายความว่า ResNet18 แม่นกว่า DenseNet
+การเทียบกับ paper ต้องคุม split, resolution, target และ budget ไม่ใช่เทียบชื่อโมเดลอย่างเดียว
+
+7. ทำไมใช้ BCEWithLogitsLoss แทน CrossEntropyLoss
+------------------------------------------------
+โจทย์นี้เป็น binary classification แบบหนึ่ง logit จึงใช้ BCEWithLogitsLoss [6]
+ให้ z เป็น logit, p=sigmoid(z)=1/(1+exp(-z)), y อยู่ใน {0,1}
+binary cross-entropy:
+  L(z,y) = -[y log p + (1-y) log(1-p)]
+รูป stable สำหรับ unweighted BCE:
+  max(z,0) - zy + log(1+exp(-|z|))
+ช่วยเลี่ยงการคำนวณ log(0) และ exponential ขนาดใหญ่แบบตรง ๆ
+ส่ง raw logits ให้ loss ไม่ใส่ sigmoid ก่อน แล้วใช้ sigmoid ตอนสร้าง score
+logits และ targets ต้องมี shape [B,1] เหมือนกัน, target เป็น float32
+gradient ของ unweighted BCE ต่อ logit คือ p-y ก่อนเฉลี่ย batch
+
+Class imbalance:
+  w_pos = N_negative_train / N_positive_train
+  L_weighted = -[w_pos*y*log p + (1-y)*log(1-p)]
+เพิ่มสัดส่วน contribution ของ positive แต่ไม่ได้รับประกัน recall หรือ AP ดีขึ้น
+น้ำหนักมากอาจทำให้ false positive เพิ่ม จึงต้องดู PR และเลือก threshold ด้วย validation
+ไม่ได้ใช้ WeightedRandomSampler/oversampling ซ้ำ เพราะจะเปลี่ยนการเน้น positive เพิ่มอีกชั้น
+ต้องเปรียบเทียบกับ weighted_loss=False เป็น ablation ก่อนกล่าวว่าน้ำหนักช่วย
+weighted score ไม่ใช่ prevalence-calibrated probability ของโลกจริง
+
+แล้ว CrossEntropyLoss ใช้ได้หรือไม่?
+  - Binary แบบสอง logits (negative/positive) + integer target [B] ใช้ CE ได้เช่นกัน
+  - สองแบบอธิบาย task เดียวกันได้ ไม่ใช่ BCE แม่นกว่า CE โดยธรรมชาติ
+  - หนึ่ง logit ประหยัด output และอ่านความหมายตรงไปตรงมาจึงเลือกแบบนี้
+  - ถ้าออกแบบ Normal/Pneumonia/COVID เป็นสาม class ที่ mutually exclusive จริง
+    และมี label ที่ยืนยันได้ ค่อยใช้สาม logits + CE แต่โรคสามารถร่วมกันได้
+  - ถ้าทำนายหลาย findings ที่ร่วมกันได้ ใช้ K logits + sigmoid ราย label + BCE
+    ไม่ใช้ softmax บังคับว่าต้องมีได้เพียงหนึ่งโรค
+  - MSE เป็น regression objective ที่ไม่ตรง Bernoulli likelihood และเมื่อใช้ sigmoid
+    จะมี factor p(1-p) เพิ่มใน gradient จึงอาจช้ากับคำตอบผิดที่อิ่มตัว
+    ไม่ใช่เหตุผลว่า MSE ใช้ classification ไม่ได้ทุกกรณี
+
+8. Optimization และ regularization
+-----------------------------------
+AdamW [7] เป็น Adam ที่แยก weight decay ออกจากการคำนวณ adaptive gradient statistics
+เลือกเพื่อมี adaptive step size และควบคุม decay ชัดเจน ไม่อ้างว่าใหม่หรือเหนือกว่า SGD ทุกงาน
+บท 4 อธิบาย Adam และบท 6 อธิบาย decoupled weight decay อยู่แล้ว
+default weight_decay=1e-4 ใช้กับ trainable tensors ทั้งหมดรวม bias/normalization affine
+นี่เป็นนโยบายที่เรียบง่าย; exclusion ของ bias/BN เป็นทางเลือก ablation หากเพิ่มภายหลัง
+
+ค่าหลัก:
+  batch_size 32, max_epochs 8, head_epochs 2
+  lr 1e-3; ResNet layer4 fine-tune lr 1e-4
+  dropout 0.3, min_delta AP 1e-4, patience 3 validation checks
+  ReduceLROnPlateau: validation AP, mode=max, factor=0.5, patience=1
+  clip global gradient norm ที่ 5 หลัง unscale เมื่อใช้ AMP
+  AMP เปิดบน CUDA เท่านั้น; validation ใช้ float32 เพื่ออ่านค่าอย่างสม่ำเสมอ
+  หาก gradient overflow ระหว่าง AMP scale adaptation จะให้ GradScaler ข้าม update
+  และลด scale พร้อม warning และ log amp_skipped_steps ไม่แทน gradient ด้วยศูนย์เพื่อฝืนอัปเดต
+  หยุดถ้ามากกว่า 10 ครั้งต่อ epoch หรือทั้ง epoch ไม่มี update สำเร็จ
+  full-precision non-finite gradient และ non-finite loss/parameter หยุดทันที
+
+Training step:
+  model.train() → zero_grad(set_to_none=True) → forward logits → scalar loss
+  → backward → unscale → ตรวจ/clip gradient → optimizer.step → ตรวจ parameter finite
+  ResNet จะตั้ง BatchNorm เป็น eval หลัง model.train() ตามนโยบาย freeze statistics
+Validation: model.eval() + ปิด gradient ไม่มี optimizer step
+
+Loss เฉลี่ยตามจำนวนตัวอย่าง:
+  epoch_loss = sum(batch_size_k * batch_mean_loss_k) / sum(batch_size_k)
+ไม่เฉลี่ยค่าเฉลี่ย batch อย่างเท่า ๆ กันหาก batch สุดท้ายเล็กกว่า
+ไม่ drop batch สุดท้าย ใช้ทุกตัวอย่าง
+
+Early stopping เลือก AP สูงกว่า best+min_delta แล้วเก็บ independent snapshot ลงดิสก์
+ก่อน fine-tune จะยังไม่หยุด ResNet เพื่อให้ได้ฝึกครบช่วงที่ประกาศ
+เปลี่ยน stage แล้ว reset waiting เพื่อให้ stage ใหม่ได้ patience ของตน
+เมื่อหยุดคืน best checkpoint ไม่ใช่ใช้ weights ของ epoch ล่าสุดโดยอัตโนมัติ
+
+บันทึก best.pt สำหรับโมเดลที่เลือก และ last.pt สำหรับ resume
+last เก็บ weights, optimizer, scheduler, scaler, epoch, stage, history,
+Python/NumPy/Torch/CUDA RNG และ DataLoader generator state
+ใช้ num_workers=0 ลดความซับซ้อนของ worker RNG เพื่อ resume ที่ขอบ epoch
+หากหลุดกลาง epoch จะเริ่ม epoch นั้นใหม่จาก last checkpoint
+ไม่ได้รับประกัน bitwise identical ข้าม GPU/driver/library version แม้ seed เท่ากัน
+มี synthetic test ว่า uninterrupted กับ interrupted/resumed ให้ผลตรงกันบน CPU
+
+9. Evaluation protocol และความหมายของ metric
+---------------------------------------------
+Primary selection metric: validation Average Precision (AP) [8]
+  AP = sum_k (Recall_k - Recall_(k-1)) * Precision_k
+ใช้ sklearn average_precision_score จาก continuous scores
+ไม่เรียกว่าค่า trapezoidal PR-AUC เพราะ interpolation convention ต่างกัน
+AP เหมาะกับการสนใจคุณภาพของ positive ที่หายาก แต่ขึ้นกับ prevalence
+
+Secondary metrics:
+  AUROC: ranking ระหว่าง positive และ negative; สร้างจาก score ไม่ใช่ hard labels
+  Recall = TP/(TP+FN) : พบ positive ได้เท่าไร
+  Precision = TP/(TP+FP) : ภาพที่ flag มี positive เท่าไร
+  Specificity = TN/(TN+FP) : negative ไม่ถูก flag เท่าไร
+  F1 = 2TP/(2TP+FP+FN)
+  Accuracy = (TP+TN)/N : รายงานแต่ไม่ใช้เป็นหลักเมื่อ imbalance
+  Brier = mean((score-y)^2) : สรุป error ของ probability-like score ควบคู่ reliability
+  นิยามที่ denominator เป็นศูนย์รายงาน None ไม่เติมค่าที่ทำให้โมเดลดูดี
+
+ตัวอย่างเพื่ออธิบายเท่านั้น ไม่ใช่ผลโครงงาน:
+ถ้า 1,000 ภาพมี positive 20 ภาพ แล้วทาย negative ทั้งหมด accuracy=98% แต่ recall=0%
+ตัวอย่างนี้แสดงว่าค่า accuracy เดี่ยว ๆ ไม่ตอบวัตถุประสงค์การค้น positive
+
+Threshold rule ประกาศล่วงหน้า:
+เลือก threshold ที่ให้ precision สูงสุดภายใต้ validation recall >= 0.90
+เมื่อ precision เสมอเลือก threshold สูงสุด ใช้ decision score >= threshold
+ค่า 0.90 เป็นเป้าสาธิตสำหรับวิชาเรียน ยังไม่ผ่านการกำหนดโดยแพทย์หรือ workflow จริง
+หลังเลือกแล้วล็อก threshold และใช้กับ test โดยไม่ปรับอีก
+weighted loss และ prevalence shift ทำให้ threshold=0.5 ไม่ใช่คำตอบสากล
+แม้ validation recall ผ่าน 0.90 ก็ไม่รับประกัน test recall ผ่านตามนั้น
+
+Model choice: validation AP สูงสุด; tie ใช้ลำดับ mlp, small_cnn, resnet18 ที่กำหนด
+รายงานทั้งสามโมเดลกับ majority baseline บน final test ตามแผน ไม่เลือกใหม่จาก test
+บันทึก locked_selection.json ก่อนประเมิน
+
+10. ความไม่แน่นอน Calibration และ Error analysis
+-------------------------------------------------
+Patient bootstrap สุ่มผู้ป่วยพร้อมภาพทั้งหมดแบบใส่คืน 200 ครั้ง
+คำนวณ image-level AP ในแต่ละ replicate แล้วใช้ percentile 2.5/97.5 เป็นช่วงประมาณ 95%
+replicate ที่มี class เดียวจะข้าม และรายงานจำนวน valid
+จำนวน 200 เหมาะกับเริ่มต้น; งานสรุปควรพิจารณาเพิ่มเป็น 1,000–2,000 เพื่อความเสถียร
+หากใช้ per-image bootstrap จะประเมินความเป็นอิสระเกินจริงเมื่อผู้ป่วยมีหลายภาพ
+paired comparison ใช้ผู้ป่วยที่สุ่มเหมือนกันสำหรับ AP(winner)-AP(MLP)
+ถ้าช่วงคร่อมศูนย์ยังไม่มีหลักฐานชัดของผลต่าง ไม่ได้แปลว่าโมเดลเหมือนกัน
+
+ช่วง bootstrap ไม่รวมความแปรปรวนจาก random training seed, label noise หรือ domain shift
+การทดลอง seed 42/43/44 ต้องคง split เดิม แล้วรายงานทุกค่ากับ mean±SD แยกจาก bootstrap CI
+mean±SD ไม่ใช่ 95% confidence interval
+
+Reliability diagram ใช้ 10 equal-width bins ตั้งแต่ 0 ถึง 1
+empty bin ไม่วาดจุด และเขียน support/mean score/observed fraction ใน CSV
+ไม่ได้ทำ calibration fitting ในฉบับนี้ จึงไม่อ้างว่า sigmoid score ถูก calibrate แล้ว
+หากจะ fit calibrator ควรแยก calibration set จากข้อมูลพัฒนาและห้าม fit บน final test
+
+Error analysis:
+  - ตรวจ FP, FN และ high-confidence wrong predictions พร้อมชื่อภาพ
+  - ตรวจ AP/PA view slices โดยรายงาน support/positive support ทุก slice
+  - พิจารณาอุปกรณ์, text markers, padding, คุณภาพภาพ และโรคร่วมเป็น shortcut ที่อาจมี
+  - ความผิดพลาดอาจมาจาก model, label หรือ input pipeline ต้องตรวจหลักฐานก่อนสรุป
+  - การดู final-test errors ใช้สำหรับอภิปราย หากจะปรับจากผลนี้ต้องมี holdout ใหม่
+
+Grad-CAM [9] ใช้ gradient ของ positive logit ต่อ layer4 feature maps
+เฉลี่ย gradient ตาม spatial axes เป็น channel weights แล้วรวม feature maps และ ReLU
+upsample กลับไปขนาด input เพื่อวาง heatmap
+ไม่ได้ใช้ ground-truth bounding box ประเมิน localization จึงไม่รายงาน localization accuracy
+heatmap ที่ดูคล้ายปอดไม่ได้พิสูจน์ว่าโมเดลใช้เหตุผลทางการแพทย์ถูกต้อง
+
+11. การออกแบบการทดลองเพื่อพิสูจน์ว่า “ดีกว่าที่เรียน” อย่างไร
+------------------------------------------------------------
+แกนของโครงงานใช้บทเรียนเดิมเกือบทั้งหมด ส่วน CNN/transfer คือ representation ที่ขยายออกมา
+ข้อเสนอที่ทดสอบได้มีดังนี้:
+
+H1: CNN อาจได้ AP สูงกว่า MLP เพราะใช้โครงสร้างเชิงพื้นที่
+ทดสอบ MLP vs SmallCNN บน split เดียวกัน โดยเปิดเผย resolution/parameter differences
+หากต้องการ isolation จริงเพิ่ม CNN64 หรือ MLP224 เป็น controlled experiment
+
+H2: pretraining อาจเพิ่ม AP หรือทำให้ถึง AP เป้าหมายเร็วกว่า random initialization
+ทดสอบ ResNet18 pretrained=True vs False โดยใช้ architecture, split และ budget เดียวกัน
+สำหรับการแยก pretraining ล้วนต้องกำหนด freeze/fine-tune policy ให้เทียบกันอย่างยุติธรรม
+random backbone ที่ freeze แล้วอาจเสียเปรียบ จึงควรเพิ่มการฝึกทั้ง network จากศูนย์เป็น run แยก
+ไม่สรุปผล pretraining ล้วนจากการเทียบ SmallCNN กับ ResNet เพราะ architecture ต่างกันด้วย
+
+H3: weighted BCE อาจเพิ่ม recall แต่แลก precision/calibration
+ทดสอบ architecture เดิม weighted_loss=True/False; ไม่เพิ่ม oversampling อีกชั้น
+ใช้ threshold rule เดียวกัน แต่ threshold ตัวเลขอาจต่างกันเพราะ score scale เปลี่ยน
+
+แผนประหยัด GPU:
+  รอบแรก: main three models seed 42, quick profile ตรวจ pipeline และ curves
+  ถ้ามีงบ: เพิ่ม 2–3 ablations และ learning-rate sensitivity ที่ประกาศก่อนดู test
+  ยืนยันด้วย seed 43/44 บน split เดิม; log ทุก trial รวม trial ที่ล้มเหลว
+  หลังปิดการเลือกทั้งหมดใช้ full protocol สำหรับผลฉบับสุดท้ายถ้าทรัพยากรพอ
+  การย้าย quick ไป full ต้องเริ่ม protocol/run ใหม่ ไม่เรียกคะแนนว่า benchmark เดียวกัน
+
+การเปรียบเทียบนี้เป็น practical system comparison ไม่ใช่ architecture-only experiment
+เพราะ MLP ลดความละเอียด, ResNet มี external pretraining และ stage/learning rate ต่างกัน
+รายงาน training seconds, selected epoch, parameters และ GPU ร่วมกับ AP
+วิธีใหม่ที่ได้ AP ดีขึ้นเล็กน้อยแต่ใช้ทรัพยากรมากขึ้นมากอาจไม่ใช่ทางเลือกที่เหมาะที่สุด
+
+12. ผลการทดลอง — เติมหลังรันจริงเท่านั้น
+----------------------------------------
+ยังไม่มี dataset จริงใน workspace และยังไม่ได้ฝึกบน Colab
+ส่วนนี้จึงไม่ใส่ตัวเลขสมมติหรือคัดคะแนน paper อื่นมาอ้าง
+
+ข้อมูลที่ต้องเติม:
+  Dataset resolved version: [จาก data_audit.json]
+  Metadata SHA-256 / split hash: [จาก data_audit.json]
+  Code commit: [จาก notebook / Git]
+  Profile/protocol: [quick grouped หรือ full official]
+  Train/val/test images, patients, positive support, prevalence: [splits/summary.json]
+  Software/GPU/seed: [run.json และ environment_freeze.txt]
+
+ตาราง A: Validation comparison (ใช้เลือกโมเดล)
+Model              AP        AUROC       Threshold      Recall      Precision
+Majority           [ประเมิน baseline แยก หากต้องการ validation baseline]
+MLP                [เติมจาก validation_comparison.csv]
+SmallCNN           [เติมจาก validation_comparison.csv]
+ResNet18           [เติมจาก validation_comparison.csv]
+Selected model / selected epoch / reason: [จาก locked_selection.json และ validation.json]
+
+ตาราง B: Final held-out test (ห้ามใช้เลือกใหม่)
+Model              AP [95% group CI]    AUROC   Recall  Precision  Specificity F1
+Majority           [เติมจาก final_test/test_comparison.csv]
+MLP                [เติมจาก final_test/test_comparison.csv]
+SmallCNN           [เติมจาก final_test/test_comparison.csv]
+ResNet18           [เติมจาก final_test/test_comparison.csv]
+แสดง TN,FP,FN,TP, threshold, Brier และ positive support ประกอบทุกโมเดล
+
+ตาราง C: Resource cost
+Model              Parameters     Total train seconds   Best epoch  GPU/version
+MLP                [จาก run.json/history.csv]
+SmallCNN           [จาก run.json/history.csv]
+ResNet18           [จาก run.json/history.csv]
+
+แนบภาพ learning curves, PR/ROC, confusion matrices, reliability plots
+แยก weighted train loss และ unweighted validation BCE ไม่ตีความเป็น gap เดียวกัน
+อภิปราย FP/FN อย่างน้อยชนิดละหลายตัวอย่างโดยไม่เปิดเผยข้อมูลผู้ป่วยเพิ่มเติม
+สรุปว่า H1/H2/H3 ได้รับหลักฐานมากน้อยเพียงใดจากสิ่งที่ทดลองจริง
+ถ้าไม่ได้ทำ ablation ให้เขียนว่ายังไม่ทดสอบ ห้ามถือว่าการคาดการณ์เป็นผล
+
+13. ทรัพยากร การทำซ้ำ และการส่งงาน
+------------------------------------
+Colab เป็นตัวเลือกเหมาะสมสำหรับนักศึกษาเพราะเปิด notebook/ใช้ GPU ได้เมื่อมีทรัพยากร [10]
+แต่โควตาและ GPU เปลี่ยนได้ จึงเก็บ checkpoint บน Drive ทุก epoch
+อ่านภาพจาก local runtime ลดการอ่านไฟล์เล็กจำนวนมากผ่าน Drive
+dataset เต็มหลายสิบ GB อาจใช้เวลานานและต้องมี disk headroom
+max_patients ลดเวลาฝึกแต่ไม่ลดขนาด download ของ Kagglehub
+เมื่อพื้นที่ไม่พอใช้ extracted subset ที่มาจาก NIH และรายงานว่า subset หรือใช้ Kaggle Notebook
+ไม่ใช้ Requester Pays cloud bucket โดยถือว่าเป็นแหล่งฟรี
+
+dependency ระบุ ranges เพื่อรองรับ runtime; เก็บ pip freeze ของการรันจริงเพื่อทำซ้ำ
+ใช้ commit SHA และ dataset version เดิมเมื่อต้องการเทียบผลจริง
+main ที่อัปเดตได้ไม่ใช่ immutable experiment identifier
+การ seed เป็นเพียงส่วนหนึ่งของ reproducibility ต้องเก็บ code/data/config/environment ด้วย
+
+ส่ง GitHub เฉพาะ notebook, source, tests, คู่มือ, รายงาน และ attribution
+.gitignore กัน dataset/credentials/checkpoints/artifacts โดยตั้งใจ
+ไฟล์สไลด์ของผู้สอนอยู่นอก repo ไม่เผยแพร่ตามไปด้วย
+อย่า load checkpoint ที่ไม่ทราบแหล่ง: project checkpoints ใช้ torch.load(weights_only=False)
+เพื่อเก็บ Python/NumPy RNG จึงต้องใช้เฉพาะไฟล์ที่ตนสร้างและเชื่อถือได้
+
+14. ข้อจำกัดและแนวทาง COVID-19 ในอนาคต
+----------------------------------------
+ข้อจำกัดปัจจุบัน:
+  - ไม่มี COVID label, ไม่มีผลยืนยันเชื้อ, ไม่มี external clinical validation
+  - label noise และ non-Pneumonia negatives ที่มีโรคอื่น
+  - class imbalance และ positive support อาจต่ำใน quick subset
+  - single-source/historical data ไม่ครอบคลุมโรงพยาบาล เครื่องถ่าย และประชากรใหม่
+  - resize 224 อาจสูญเสีย finding เล็ก และ padded border อาจเป็น shortcut
+  - group split กันผู้ป่วยซ้ำแต่ยังไม่ได้ตรวจ near duplicates ทุกชนิด
+  - AMP/GPU nondeterminism และงบ epoch จำกัด
+  - ยังไม่ทำ calibration fitting, external validation, clinical prospective study
+  - ไม่มีหลักฐาน localization ground truth สำหรับ Grad-CAM
+
+หากอาจารย์ต้องการ COVID-19 เป็นผลลัพธ์บังคับจริง:
+  1) ขออนุมัติ dataset เพิ่มที่มี COVID-19 reference standard และ patient/source IDs
+  2) พิจารณาว่า target เป็น infection confirmed, radiographic finding หรือโรคร่วม
+  3) ตรวจ distribution ตามแหล่งข้อมูล อย่าให้โมเดลจำ hospital/source แทนโรค
+  4) แบ่งผู้ป่วยและโรงพยาบาลอย่างเหมาะสม ใช้ external test ที่ไม่ทับผู้ป่วย/แหล่ง
+  5) ถ้า labels ร่วมกันได้ใช้ multilabel BCE; ถ้า mutually exclusive จริงค่อยใช้ CE
+  6) จัด protocol และ baseline ใหม่ ไม่ใช้ checkpoint binary นี้อ้างผล COVID ทันที
+การออกแบบเช่นนี้รักษาความถูกต้องของโจทย์และข้อมูล มากกว่าการเปลี่ยนชื่อ class เฉย ๆ
+
+15. สถานะการตรวจสอบซอฟต์แวร์
+-----------------------------
+มี automated tests ด้วยภาพและ metadata สังเคราะห์สำหรับ:
+  - parse positive ที่มีหลาย findings และ reject metadata/ไฟล์ไม่ครบ
+  - grouped/official split ไม่มีผู้ป่วยซ้อน และ split hash ทำซ้ำได้
+  - threshold rule, confusion counts, undefined metrics และ paired group bootstrap
+  - output shape ของทั้งสามโมเดล และ Grad-CAM มีขนาด/ค่าถูกต้อง
+  - train/validation และ resume เมื่อจำลอง runtime หลุด
+  - notebook schema, syntax ทุก code cell และไม่มี output ปลอมใน notebook
+  - CUDA mixed precision ทั้งสามโมเดล รวมกลไกข้าม update เมื่อ AMP scale overflow
+ผลตรวจฉบับนี้: 7 tests ผ่าน รายละเอียด environment และสิ่งที่ยังไม่ตรวจอยู่ใน VERIFICATION.txt
+การผ่าน tests แสดงความถูกต้องบางส่วนของ implementation ไม่ใช่ประสิทธิภาพทางการแพทย์
+ต้องรันข้อมูลจริงบน Colab เพื่อตรวจเวลา, disk, GPU memory และผลเชิงทำนาย
+
+16. เอกสารอ้างอิง
+------------------
+[1] NIH Clinical Center. NIH Chest X-ray dataset.
+    https://nihcc.app.box.com/v/ChestXray-NIHCC
+[2] NIH Chest X-rays, Kaggle distribution.
+    https://www.kaggle.com/datasets/nih-chest-xrays/data
+[3] Wang et al. ChestX-ray8: Hospital-scale Chest X-ray Database and Benchmarks
+    on Weakly-Supervised Classification and Localization of Common Thorax Diseases.
+    CVPR 2017; ChestX-ray14 update in appendix. https://arxiv.org/abs/1705.02315
+    Attribution/access notes: https://docs.cloud.google.com/healthcare-api/docs/resources/public-datasets/nih-chest
+[4] He et al. Deep Residual Learning for Image Recognition.
+    https://arxiv.org/abs/1512.03385
+[5] PyTorch. Transfer Learning for Computer Vision Tutorial; torchvision ResNet.
+    https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial
+    https://docs.pytorch.org/vision/main/models/resnet.html
+[6] PyTorch. BCEWithLogitsLoss / CrossEntropyLoss API documentation.
+    https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html
+    https://docs.pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+[7] Loshchilov and Hutter. Decoupled Weight Decay Regularization.
+    https://arxiv.org/abs/1711.05101
+[8] scikit-learn. average_precision_score.
+    https://scikit-learn.org/stable/modules/generated/sklearn.metrics.average_precision_score.html
+[9] Selvaraju et al. Grad-CAM: Visual Explanations from Deep Networks via Gradient-based Localization.
+    https://arxiv.org/abs/1610.02391
+[10] Google Colab FAQ. https://research.google.com/colaboratory/faq.html
+[11] Kagglehub official documentation. https://github.com/Kaggle/kagglehub
+[12] Vasin Suttichaya. เอกสารประกอบการสอน 6 บทใน Sheet ตามหัวข้อในส่วน 3
+     ใช้เป็นแหล่งเรียนเฉพาะงานนี้ ไม่ได้รวมสไลด์ใน repository

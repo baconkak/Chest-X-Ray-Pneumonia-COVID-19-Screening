@@ -1,0 +1,39 @@
+Dataset and attribution record (checked 18 October 2026)
+======================================================
+
+Chosen dataset: NIH ChestX-ray14, provided by NIH Clinical Center.
+NIH original download: https://nihcc.app.box.com/v/ChestXray-NIHCC
+Kaggle distribution: https://www.kaggle.com/datasets/nih-chest-xrays/data
+Dataset files are downloaded by the user at runtime and are not redistributed in Git.
+The notebook records the resolved Kaggle cache version path, metadata SHA-256,
+exact split manifests and code commit. Preserve those records with each experiment.
+
+Citation:
+Xiaosong Wang, Yifan Peng, Le Lu, Zhiyong Lu, Mohammadhadi Bagheri,
+Ronald M. Summers. ChestX-ray8: Hospital-scale Chest X-ray Database and
+Benchmarks on Weakly-Supervised Classification and Localization of Common
+Thorax Diseases. CVPR 2017. ChestX-ray14 update is described in the appendix.
+https://arxiv.org/abs/1705.02315
+https://doi.org/10.1109/CVPR.2017.369
+
+Attribution guidance:
+https://docs.cloud.google.com/healthcare-api/docs/resources/public-datasets/nih-chest
+Consult the original dataset and the Kaggle distribution's current terms before use.
+This project acknowledges NIH Clinical Center and links the original download and paper.
+Google Cloud's NIH bucket is Requester Pays, so this notebook does not use it as a free download workaround.
+
+Label contract: 14 thoracic findings, with possible co-occurring findings, plus No Finding.
+COVID-19 is absent from the original label vocabulary. Do not manufacture COVID labels.
+Labels are extracted from radiology reports and are imperfect reference labels.
+Pneumonia-absent does not mean normal, healthy, or COVID-negative.
+
+Additional primary implementation references:
+https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html
+https://docs.pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial
+https://docs.pytorch.org/vision/main/models/resnet.html
+https://arxiv.org/abs/1512.03385 (ResNet)
+https://arxiv.org/abs/1711.05101 (decoupled weight decay / AdamW)
+https://arxiv.org/abs/1610.02391 (Grad-CAM)
+https://github.com/Kaggle/kagglehub
+https://research.google.com/colaboratory/faq.html

@@ -11,7 +11,8 @@ NIH ChestX-ray14 ไม่มี COVID-19 label จึงยังไม่ร�
 กลุ่มไม่มี Pneumonia อาจมีโรคอื่น ไม่เท่ากับ “healthy”
 
 เริ่มที่ [readme.txt](readme.txt) สำหรับคู่มือภาษาไทยแบบละเอียด
-และ [report_th.txt](report_th.txt) สำหรับรายงานวิธีการ เหตุผล สูตร และการเชื่อมกับบทเรียน 6 บท
+และ [รายงาน Word](report_th.docx) สำหรับรายงานวิธีการ เหตุผล สูตร และการเชื่อมกับบทเรียน 6 บท
+มี [ฉบับข้อความต้นฉบับ](report_th.txt) สำหรับค้นหาและสร้างเอกสารใหม่
 
 - [Notebook สำหรับ Google Colab](Chest_Xray_Pneumonia_Colab.ipynb)
 - `src/`: data audit, patient split, models, training/resume, metrics, plots, Grad-CAM

@@ -6,7 +6,7 @@
 
 โปรเจกต์นี้เตรียม pipeline สำหรับฝึกจริงบน Google Colab แล้ว
 มี MLP ตามเนื้อหา feedforward, CNN ขนาดเล็ก และ ResNet18 แบบ transfer learning
-มีรายงานอธิบายเหตุผลใน report_th.txt แต่ยังไม่มีคะแนนทดลองจริง
+มีรายงาน Word อธิบายเหตุผลใน report_th.docx แต่ยังไม่มีคะแนนทดลองจริง
 ผู้ใช้ต้องดาวน์โหลดข้อมูล เลือก GPU และรัน notebook เพื่อสร้างผลของตัวเอง
 อย่านำผล synthetic tests ไปอ้างว่าเป็นประสิทธิภาพตรวจโรค
 
@@ -18,7 +18,8 @@ negative อาจมีโรคอื่น; No Finding ไม่ใช่ใ�
 2. โครงสร้างไฟล์
 
 Chest_Xray_Pneumonia_Colab.ipynb : จุดเริ่มต้น ใช้งานตามลำดับ cell
-report_th.txt                  : รายงานภาษาไทยพร้อมสูตรและเหตุผล
+report_th.docx                 : รายงาน Word จัดหน้า พร้อมสูตรและตารางสำหรับอ่านและแก้ไข
+report_th.txt                  : ข้อความต้นฉบับของรายงาน
 readme.txt                     : คู่มือฉบับนี้
 README.md                      : หน้าแรก GitHub และปุ่มเปิด Colab
 requirements.txt               : dependencies สำหรับเครื่องส่วนตัว
@@ -176,7 +177,7 @@ Grad-CAM เป็นเพียงคำอธิบายการตอบ�
 
 10. เขียนผลรายงานและส่งงาน
 
-อ่าน report_th.txt แล้วเติมตารางผลจากไฟล์จริง ระบุว่า quick/full และ version ใด
+อ่าน report_th.docx แล้วเติมตารางผลจากไฟล์จริง ระบุว่า quick/full และ version ใด
 ใส่ชื่อผู้จัดทำ รหัสนักศึกษา รายวิชา ผู้สอน ตามข้อมูลจริง
 แนบ learning curves, PR/ROC, confusion matrix, error analysis และข้อจำกัด
 อธิบายด้วยว่าผลต่างมีความไม่แน่นอน ไม่สรุปว่า ResNet ดีกว่าเสมอ

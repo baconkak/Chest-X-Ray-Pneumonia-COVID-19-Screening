@@ -9,6 +9,9 @@ Result: 8 tests passed, including CUDA AMP, the sample download guard and the
 complete offline notebook workflow. Real sample metadata with seed 42 gives:
 train 3,917 images / 42 positives; validation 826 / 9; test 863 / 11.
 The complete 2.25 GB archive and real-data model training were not run locally.
+The original quick default was subsequently restored for the larger disk.
+Download tests cover sample at 12 GiB free, quick/full at 210 GiB free,
+and rejection of insufficient disk before any dataset download is called.
 
 Command: python -m unittest discover -s tests -v
 Result: 7 tests passed, including CUDA AMP and the offline notebook workflow.

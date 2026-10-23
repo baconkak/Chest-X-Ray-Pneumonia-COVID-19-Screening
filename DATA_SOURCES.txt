@@ -1,7 +1,12 @@
 Dataset and attribution record (checked 18 October 2026)
 ======================================================
 
-Update 23 October 2026: the default download is the publisher's NIH Random Sample,
+Latest setting, 23 October 2026: the original quick profile is restored as default,
+using nih-chest-xrays/data/versions/3 (full download, then up to 3,000 patients).
+Use full profile to train all patients. Both require at least 110 GiB free disk.
+The smaller NIH sample remains an optional profile as documented below.
+
+Earlier update 23 October 2026: added the publisher's NIH Random Sample,
 https://www.kaggle.com/datasets/nih-chest-xrays/sample (version 4).
 Kaggle metadata lists 5,606 images and 2,252,611,005 bytes; sample_labels.csv
 was checked directly and contains 5,606 rows with 62 Pneumonia-positive images.

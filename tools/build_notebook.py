@@ -60,10 +60,11 @@ print("Code commit:", CODE_SHA)
 ''')
 md('''## 2. เก็บผลใน Drive และตั้งการทดลอง
 อนุญาต Drive เมื่อ Colab ถาม เพื่อเก็บ checkpoint ข้าม session
-**sample (ค่าเริ่มต้น)**: NIH Random Sample จากผู้เผยแพร่เดิม 5,606 ภาพ ประมาณ 2.25 GB
+**quick (ค่าเริ่มต้นเดิม)**: ดาวน์โหลด NIH ชุดเต็ม แล้วเลือกผู้ป่วยไม่เกิน 3,000 คนสำหรับเริ่มทดลอง
+ใช้ grouped split 70/15/15 ตามผู้ป่วย การจำกัดผู้ป่วยลดเวลาฝึก แต่ไม่ลดขนาดดาวน์โหลด
+**sample (ทางเลือกเมื่อดิสก์น้อย)**: NIH Random Sample จากผู้เผยแพร่เดิม 5,606 ภาพ ประมาณ 2.25 GB
 ใช้ภาพที่มีทั้งหมด แบ่ง grouped split 70/15/15 ตามผู้ป่วย ไม่ดาวน์โหลดชุดเต็ม
 มี Pneumonia ประมาณ 62 ภาพ จึงต้องดู positive support และความไม่แน่นอนของคะแนน
-**quick**: ชุดเต็มจาก Kaggle แล้วจำกัดผู้ป่วย 3,000 คน ลดเวลาฝึก แต่ไม่ลดขนาดดาวน์โหลด
 **full**: ใช้ข้อมูลครบและ official test list; แบ่ง validation 20% ของ development ตามผู้ป่วย
 
 ผล sample/quick เทียบตรงกับ official benchmark ไม่ได้
@@ -71,8 +72,8 @@ md('''## 2. เก็บผลใน Drive และตั้งการทด�
 resume ใช้ config/split เดิมทั้งหมด ห้ามเพิ่ม epochs หรือเปลี่ยน hyperparameter ในงานเดิม
 ''')
 code('''USE_DRIVE = True
-PROFILE = "sample"  # "sample" (small download), "quick", or "full"
-RUN_NAME = "nih_sample_seed42_v1"
+PROFILE = "quick"  # Original default; use "full" to train all patients, or "sample" for a small download.
+RUN_NAME = "nih_quick_seed42_v2"
 RESUME = False
 if PROFILE not in {"sample", "quick", "full"}:
     raise ValueError("PROFILE must be sample, quick or full")
@@ -93,18 +94,21 @@ ALLOW_PARTIAL = PROFILE == "quick"
 MODELS = ["mlp", "small_cnn", "resnet18"]
 print(OUT)
 ''')
-md('''## 3. ดาวน์โหลด NIH ชุดเล็ก หรือใช้ไฟล์ที่มีอยู่
+md('''## 3. ดาวน์โหลด NIH ชุดเต็ม หรือใช้ไฟล์ที่มีอยู่
 แหล่งที่อาจารย์ระบุ: [NIH Chest X-rays บน Kaggle](https://www.kaggle.com/datasets/nih-chest-xrays/data)
 หรือ [NIH ต้นฉบับ](https://nihcc.app.box.com/v/ChestXray-NIHCC)
 
-ค่าเริ่มต้น PROFILE="sample" ใช้ [NIH Random Sample](https://www.kaggle.com/datasets/nih-chest-xrays/sample)
+ค่าเริ่มต้นกลับเป็น PROFILE="quick" ซึ่งดาวน์โหลด NIH ชุดเต็มเวอร์ชัน 3 ประมาณ 42 GB
+ก่อนดาวน์โหลดต้องมีพื้นที่ว่างอย่างน้อย 110 GiB เพื่อเก็บทั้ง archive และไฟล์ที่แตกพร้อมกัน
+ถ้าใช้ PROFILE="full" จะโหลดชุดเดียวกันแต่ฝึกครบทุกผู้ป่วยตาม official split
+พื้นที่ดิสก์รวม 210 GB ต้องดูค่า Free disk ว่าเหลืออย่างน้อย 110 GiB ด้วย
+
+ทางเลือก PROFILE="sample" ใช้ [NIH Random Sample](https://www.kaggle.com/datasets/nih-chest-xrays/sample)
 เวอร์ชัน 4 ซึ่งมาจากผู้เผยแพร่ NIH เดิม มี 5,606 ภาพและ `sample_labels.csv`
-DOWNLOAD_DATA=True จะดาวน์โหลดเฉพาะชุดนี้ ไม่ดึงชุดเต็ม 42 GB
+DOWNLOAD_DATA=True กับ PROFILE="sample" จะดาวน์โหลดเฉพาะชุดเล็ก
 ตรวจพื้นที่ว่างอย่างน้อย 10 GiB เพื่อเผื่อ archive, ไฟล์ที่แตก และผลการฝึก
-ถ้าก่อนหน้านี้เจอ No space left on device ให้บันทึก notebook แล้วเลือก
-Runtime → Disconnect and delete runtime เพื่อเริ่มดิสก์ใหม่ จากนั้นรัน notebook ฉบับนี้จากต้น
-อย่ากดลบรันไทม์หากมีไฟล์ผลลัพธ์ที่ยังไม่ได้เก็บไว้ใน Drive
-quick/full เป็นตัวเลือกขั้นสูงที่ดาวน์โหลดเต็ม ต้องว่างอย่างน้อย 110 GiB หรือใช้ไฟล์ที่มีอยู่
+หลังเพิ่มดิสก์แล้วไม่จำเป็นต้องลบ runtime หากค่า Free disk เพียงพอ
+หากมีข้อมูลที่ดาวน์โหลดและแตกเสร็จแล้ว ใช้ DOWNLOAD_DATA=False แล้วชี้ DATA_ROOT ไปที่โฟลเดอร์นั้น
 ถ้า authentication ถูกขอ ให้ใช้ `kagglehub.login()` ตามคู่มือ Kaggle; ห้ามใส่ token ลง notebook
 
 ตัวเลือก B: ดาวน์โหลดเองจากแหล่งข้างต้น แตก zip/tar **ก่อน** แล้วตั้ง DATA_ROOT ให้ชี้โฟลเดอร์รวม

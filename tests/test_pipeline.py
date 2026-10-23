@@ -52,6 +52,20 @@ class PipelineTests(TestCase):
             with patch.dict(sys.modules,{'kagglehub':fake_hub}), patch('shutil.disk_usage',return_value=SimpleNamespace(free=12*2**30)):
                 exec(notebook.cells[6].source,context)
             self.assertEqual(calls,['nih-chest-xrays/sample/versions/4'])
+            for profile in ['quick','full']:
+                calls.clear()
+                with patch.dict(sys.modules,{'kagglehub':fake_hub}), patch('shutil.disk_usage',return_value=SimpleNamespace(free=210*2**30)):
+                    exec(notebook.cells[6].source,{'Path':Path,'PROFILE':profile})
+                self.assertEqual(calls,['nih-chest-xrays/data/versions/3'])
+            # Execute the default settings cell offline and verify the original protocol.
+            settings=notebook.cells[4].source.replace('USE_DRIVE = True','USE_DRIVE = False')
+            settings=settings.replace('Path("outputs")',repr(str(root/'outputs')))
+            settings=settings.replace('else '+repr(str(root/'outputs')), 'else Path('+repr(str(root/'outputs'))+')')
+            context={'Path':Path}
+            exec(settings,context)
+            self.assertEqual(context['PROFILE'],'quick')
+            self.assertEqual(context['SPLIT_MODE'],'grouped')
+            self.assertEqual(context['MAX_PATIENTS'],3000)
             for profile,free_gib in [('sample',9),('quick',70),('full',70)]:
                 calls.clear()
                 with patch.dict(sys.modules,{'kagglehub':fake_hub}), patch('shutil.disk_usage',return_value=SimpleNamespace(free=free_gib*2**30)):

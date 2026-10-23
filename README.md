@@ -5,9 +5,10 @@
 โปรเจกต์ Deep Learning ปี 3: เปรียบเทียบ **MLP, Small CNN และ ResNet18 transfer learning**
 บน **NIH ChestX-ray14** ตาม dataset ที่อาจารย์ระบุ
 
-**ค่าเริ่มต้นใหม่ 23 ตุลาคม 2569:** ใช้ [NIH Random Sample](https://www.kaggle.com/datasets/nih-chest-xrays/sample)
-จากผู้เผยแพร่เดิม **5,606 ภาพ ประมาณ 2.25 GB** แทนการดาวน์โหลดชุดเต็มประมาณ 42 GB
-ไม่เปลี่ยนโรคหรือแหล่งข้อมูล และยังแบ่งผู้ป่วยแยกกันระหว่าง train/validation/test
+**กลับค่าเริ่มต้นเดิมแล้ว:** `PROFILE="quick"` ดาวน์โหลด NIH ชุดเต็มประมาณ **42 GB**
+แล้วเลือกผู้ป่วยไม่เกิน 3,000 คนสำหรับเริ่มทดลองเหมือนเดิม
+หากต้องการฝึกข้อมูลครบทั้งหมดให้ใช้ `PROFILE="full"`
+ยังตรวจพื้นที่ว่างอย่างน้อย **110 GiB** เพื่อเผื่อ archive และไฟล์ที่แตกพร้อมกัน
 
 **ขอบเขตที่ทำได้:** ทำนายการมี label Pneumonia เทียบกับการไม่มี label นี้
 NIH ChestX-ray14 ไม่มี COVID-19 label จึงยังไม่รองรับการฝึกหรือวัดผล COVID-19
@@ -93,7 +94,10 @@ cell แรกจะนำ source จาก GitHub มาใช้ และพ�
 ผลอยู่ที่ MyDrive/ChestXrayProject/<RUN_NAME>/ ไม่ต้องเก็บ dataset ลง Git
 `USE_DRIVE=False` จะเก็บใน outputs/ ของ runtime ซึ่งหายได้เมื่อ runtime ถูกลบ
 
-`PROFILE="sample"` เป็นค่าเริ่มต้นใหม่ ใช้ชุด NIH Random Sample เวอร์ชัน 4 ทั้ง 5,606 ภาพ
+`PROFILE="quick"` เป็นค่าเริ่มต้นเดิมที่นำกลับมาใช้ ดาวน์โหลดชุดเต็มแล้วเลือกผู้ป่วย 3,000 คน
+ใช้ `RUN_NAME="nih_quick_seed42_v2"` เพื่อแยกจากงาน sample หรือ checkpoint เก่า
+
+`PROFILE="sample"` เป็นทางเลือกสำหรับดิสก์น้อย ใช้ชุด NIH Random Sample เวอร์ชัน 4 ทั้ง 5,606 ภาพ
 ดาวน์โหลดประมาณ 2.25 GB และแบ่ง grouped 70/15/15 ตามผู้ป่วย โดยไม่สุ่มตัดเหลือ 3,000 คนอีก
 มี positive Pneumonia เพียง 62 ภาพ จึงต้องอ่าน positive support และช่วงความไม่แน่นอนประกอบ
 เหมาะสำหรับเริ่มทดลอง ไม่ใช่ official benchmark หรือหลักฐานทางคลินิก
@@ -120,6 +124,9 @@ cell แรกจะนำ source จาก GitHub มาใช้ และพ�
 ผู้ให้ข้อมูลคือ NIH Clinical Center; ดูข้อกำหนด attribution ใน DATA_SOURCES.txt
 
 วิธี A (อัตโนมัติ): `DOWNLOAD_DATA=True` ใน notebook
+ค่าเริ่มต้น `PROFILE="quick"` ใช้ `nih-chest-xrays/data/versions/3` ดาวน์โหลดชุดเต็มประมาณ 42 GB
+ตรวจค่า **Free disk** ก่อนเริ่ม ต้องเหลืออย่างน้อย 110 GiB แม้ดิสก์รวมจะเป็น 210 GB
+`PROFILE="full"` ดาวน์โหลดชุดเดียวกัน แต่ฝึกทุกผู้ป่วยและใช้ official split
 เมื่อ `PROFILE="sample"` ใช้ `kagglehub.dataset_download("nih-chest-xrays/sample/versions/4")`
 ดาวน์โหลดเฉพาะชุดเล็กและบันทึก path/version ที่ได้ ต้องมีพื้นที่ว่างอย่างน้อย **10 GiB**
 เพื่อเผื่อ archive, ไฟล์ที่แตก และผลการฝึก ไม่ได้หมายความว่า dataset ขนาด 10 GiB
@@ -168,6 +175,10 @@ full จะไม่ยอมรับภาพขาด, official lists ขา�
 
 #### หาก Colab เดิมดิสก์เต็มไปแล้ว
 
+หากเพิ่มดิสก์เป็น 210 GB แล้วและพื้นที่ว่างเกิน 110 GiB สามารถใช้ชุดเต็มได้โดยไม่ต้องลบ runtime
+หากดาวน์โหลดและแตกไฟล์ครบแล้ว ให้ใช้ `DOWNLOAD_DATA=False` และชี้ `DATA_ROOT` ไปยังข้อมูลเดิม
+ขั้นตอนล้าง runtime ด้านล่างใช้เมื่อพื้นที่ยังไม่เพียงพอและต้องการเริ่มใหม่ด้วย sample เท่านั้น
+
 1. เก็บไฟล์ผลลัพธ์ที่ต้องการไว้ใน Drive และบันทึก notebook ก่อน
 2. เลือก **Runtime → Disconnect and delete runtime** เพื่อทิ้งดิสก์ชั่วคราวที่เต็ม
    การกระทำนี้ลบไฟล์ภายใน runtime และไม่ลบไฟล์ที่เก็บไว้ใน Google Drive
@@ -176,7 +187,7 @@ full จะไม่ยอมรับภาพขาด, official lists ขา�
 5. ตรวจให้ช่อง Dataset แสดง `nih-chest-xrays/sample/versions/4` ก่อนเริ่มดาวน์โหลด
 
 ห้ามใช้ run/checkpoint เดิมจาก dataset เต็มมารวมกับ sample เพราะ split และข้อมูลต่างกัน
-รายงาน Word ฉบับเดิมอธิบาย quick/full; รายละเอียดโปรไฟล์ sample ที่เพิ่มภายหลังอยู่ในคู่มือส่วนนี้
+รายงาน Word อธิบาย quick/full ซึ่งตรงกับค่าเริ่มต้นที่นำกลับมาใช้ ส่วน sample เป็นตัวเลือกเพิ่มเติม
 
 ### 6. ตรวจข้อมูลก่อนฝึก
 

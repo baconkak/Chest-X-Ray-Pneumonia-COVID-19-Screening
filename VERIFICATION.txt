@@ -55,3 +55,15 @@ training seed 42, ResNet18 pw10 / ResNet50 pw10 / ResNet50 pw1,
 head2, patience5, AMP init scale1024, validation AP checkpoint selection.
 DenseNet121, additional weights and repeated seeds are opt-in to control runtime.
 No user result ZIP, private data or weights are added to Git.
+
+Backbone diagnostic update — 23 October 2026
+--------------------------------------------
+15 tests passed: original pipeline 8 (14.470s), improved models 4 (119.136s),
+new diagnostics 3 (21.710s). Covers exact saved manifest hashing and label checks,
+patient-disjoint restore, original/input/Grad-CAM review and saved-score reproduction,
+progressive stage trainable parameters, distinct LR groups covering every parameter,
+three matched-budget arms with identical first-epoch training loss, safe warm start,
+and bitwise-identical CPU checkpoint resume across an unfreezing boundary.
+Text tqdm plus explicit spawn DataLoader workers replace notebook/fork interactions.
+Synthetic tests verify software behavior; real diagnostic model improvements are pending.
+The diagnostic notebook does not automatically download data or evaluate final test.

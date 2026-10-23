@@ -172,6 +172,7 @@ def make_loaders(splits, batch_size=32, seed=42, size=224, num_workers=0):
     loaders = {name: DataLoader(ChestDataset(frame, name == 'train', size),
                    batch_size=batch_size, shuffle=name == 'train', num_workers=num_workers,
                    worker_init_fn=_seed_worker, persistent_workers=False,
+                   multiprocessing_context='spawn' if num_workers else None,
                    pin_memory=torch.cuda.is_available(), generator=generator if name == 'train' else None)
                for name, frame in splits.items()}
     return loaders, generator

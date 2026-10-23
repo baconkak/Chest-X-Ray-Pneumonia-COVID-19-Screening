@@ -399,3 +399,57 @@ workers ไม่ persistent เพื่อให้ state ของ generator 
 [DenseNet121](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.densenet121.html),
 [DataLoader](https://docs.pytorch.org/docs/stable/data.html),
 [BCEWithLogitsLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html)
+
+## ตรวจภาพผิดและทดลองปลด backbone ทีละช่วง
+
+ใช้ [Chest_Xray_Backbone_Diagnostics.ipynb](Chest_Xray_Backbone_Diagnostics.ipynb)
+หลังรอบ `nih_full_resnet50_v3` ฝึกเสร็จ โดยรัน cell ต่อท้ายใน runtime เดิมที่ยังมีภาพและ cache
+notebook นี้ไม่ดาวน์โหลด dataset อัตโนมัติ และไม่เปิด final test
+
+1. โหลด train/validation/test manifests เดิมและตรวจ SHA256 กับ `data_audit.json`
+   รวมทั้งตรวจ patient ID, label และภาพไม่ซ้ำข้ามชุด ไม่เรียกสุ่มแบ่งข้อมูลใหม่
+2. อ่าน predictions ของ ResNet18 ที่เลือกไว้เพื่อสร้างรายการ FP/FN/TP/TN ของ validation
+   พร้อม metrics แยกตาม view/เพศและจำนวนโรคที่พบร่วมกัน ขนาดกลุ่ม/prevalence ต้องอ่านร่วมกัน
+3. สร้างภาพ original / input224 / Grad-CAM สำหรับ FN score ต่ำ, FP score สูง,
+   FP สุ่ม และ TP/TN เปรียบเทียบ โดยหลีกเลี่ยงผู้ป่วยซ้ำในแต่ละกลุ่ม
+   CSV มีข้อผิดพลาดทั้งหมด แต่ contact sheets เป็นตัวอย่างเพื่อสำรวจ ไม่ใช่ตัวแทนทั้งชุด
+4. บันทึกข้อสังเกตใน `review_annotations.csv`: ตรวจขอบภาพ ตัวหนังสือ อุปกรณ์ คุณภาพภาพ
+   และผลของการย่อ โดยไม่แก้ label เอง ไม่ใช้ CAM เพื่อยืนยันโรคหรือสาเหตุ
+5. เริ่มทั้งสาม arm จาก `resnet18_pw10_seed42/resnet18/best.pt` ไฟล์เดียวกัน
+   คง seed42, loss weight10, batch64, input224 และ validation เดิม
+
+| Trial | Epochs 1–3 | Epochs 4–6 | Epochs 7–9 |
+| --- | --- | --- | --- |
+| control_layer4 | layer4 + head | layer4 + head | layer4 + head |
+| progressive_layer34 | layer4 + head | layer3+4 + head | layer3+4 + head |
+| progressive_all | layer4 + head | layer3+4 + head | ทุกชั้น |
+
+LR ของ head=1e-5, layer4=3e-6, layer3=9e-7, layer2=2.7e-7,
+layer1=8.1e-8 และ stem=2.43e-8; ชั้นก่อนหน้าเปลี่ยนน้ำหนักเบากว่า
+BatchNorm running statistics คงที่ทุก arm เพื่อแยกผลของการปลดชั้น
+Adam moments ถูกเก็บต่อเนื่องเมื่อเปิดชั้นเพิ่ม และ reset LR/scheduler ที่ขอบช่วงเดียวกันทุก arm
+ใช้ GPU เพิ่มสูงสุด 27 epochs; เวลา full-backbone ต้องวัดจริงและอาจใช้ VRAM เพิ่มขึ้น
+เป็นการสำรวจด้วยงบสั้น หากไม่ดีขึ้นยังสรุปไม่ได้ว่าปลด backbone ไม่มีประโยชน์ทุกกรณี
+
+เลือก checkpoint ด้วย validation AP ตาม min_delta เดิม และเก็บ checkpoint เริ่มต้นไว้ด้วย
+ถ้าไม่มี epoch ใหม่ดีกว่าจุดเริ่ม จะได้ selected_epoch=0 ซึ่งหมายถึงนำ best v3 เดิมกลับมาใช้
+เปรียบเทียบ AP และ precision/FP ที่ validation recall>=0.90 พร้อม paired patient bootstrap
+ค่า interval เป็น exploratory หลังใช้ validation เลือกโมเดล ไม่ใช่หลักฐานนัยสำคัญจาก final test
+มี seed เดียว จึงยังไม่ได้วัดความแปรปรวนข้ามการฝึก
+
+ผลใหม่อยู่ `MyDrive/ChestXrayProject/nih_backbone_diagnostics_v1/`:
+
+- `error_review/validation_errors.csv`, `validation_slices.csv`, `co_labels.csv`
+- `error_review/review_manifest.csv`, `review_annotations.csv` และภาพประกอบตรวจข้อผิดพลาด
+- `plan.json`: ตารางปลดชั้น ค่าตั้ง split hash และ SHA256 checkpoint จุดเริ่ม
+- `<trial>/resnet18/`: best/last checkpoints, history, learning curves และ validation predictions
+- `validation_comparison.csv`, `paired_validation_predictions.csv`, `provenance.json`
+
+หากหลุด ใช้ RESUME_DIAGNOSTICS=True กับแผน/ชื่อเดิมทุกค่า
+ไม่เขียนทับรอบ v3 และไม่ใช้ผล test มาปรับโมเดล
+การป้องกัน worker cleanup error: ใช้ text tqdm และ DataLoader แบบ spawn เพื่อไม่สืบทอด
+สถานะ notebook/CUDA ผ่าน fork; ยังคงปิด persistent workers เพื่อ checkpoint RNG ที่ขอบ epoch
+อาจมีเวลาเริ่ม worker เพิ่มขึ้น แต่ไม่เปลี่ยน label หรือแอบซ่อน exception
+
+อ้างอิง: [PyTorch transfer learning](https://docs.pytorch.org/tutorials/beginner/transfer_learning_tutorial),
+[รายงานปัญหา tqdm.auto กับ DataLoader](https://github.com/pytorch/pytorch/issues/53703)

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch import nn
-from .models import build_model, configure_stage, training_mode, TRANSFER_MODELS
+from .models import build_model, configure_stage, training_mode, TRANSFER_MODELS, discriminative_groups
 from .data import make_loaders
 from .metrics import choose_threshold, binary_metrics
 
@@ -36,6 +36,10 @@ class TrainConfig:
     num_workers: int = 0
     amp_init_scale: float = 1024.
     progress: bool = False
+    warm_start: str | None = None
+    unfreeze_schedule: tuple = ()
+    stage_epochs: int = 3
+    backbone_lr_decay: float = .3
 
 
 def seed_all(seed):
@@ -89,7 +93,8 @@ def run_epoch(model, loader, criterion, device, name, optimizer=None, scaler=Non
     grad_norm = torch.zeros((), device=device)
     n, amp_skips, updates = 0, 0, 0
     labels, scores = [], []
-    from tqdm.auto import tqdm
+    # Text progress avoids notebook-widget/multiprocessing cleanup interactions.
+    from tqdm import tqdm
     batches = tqdm(loader, desc=f'{name} {"train" if train else "val"}', disable=not progress)
     with torch.set_grad_enabled(train):
         for x, y in batches:
@@ -141,7 +146,14 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     cfg = asdict(config)
     if config.epochs < 1 or config.patience < 1:
         raise ValueError('epochs and patience must be positive')
-    if name in TRANSFER_MODELS and not 1 <= config.head_epochs < config.epochs:
+    diagnostic = bool(config.unfreeze_schedule)
+    if diagnostic:
+        if (not name.startswith('resnet') or not config.warm_start or config.stage_epochs < 1
+                or config.epochs != len(config.unfreeze_schedule)*config.stage_epochs
+                or any(s not in {'finetune', 'layer34', 'all'} for s in config.unfreeze_schedule)
+                or not 0 < config.backbone_lr_decay <= 1):
+            raise ValueError('Diagnostic schedule requires a ResNet warm start, valid stages and equal phase budgets')
+    if not diagnostic and name in TRANSFER_MODELS and not 1 <= config.head_epochs < config.epochs:
         raise ValueError('Transfer learning needs 1 <= head_epochs < epochs')
     if config.positive_weight is not None and (not config.weighted_loss or
             not np.isfinite(config.positive_weight) or config.positive_weight <= 0):
@@ -149,7 +161,9 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     if not np.isfinite(config.amp_init_scale) or config.amp_init_scale <= 0:
         raise ValueError('amp_init_scale must be finite and positive')
     out = Path(out_dir) / name; out.mkdir(parents=True, exist_ok=True)
-    signature = hashlib.sha256(json.dumps(dict(config=cfg, split_hash=split_hash, model=name),
+    warm_hash = hashlib.sha256(Path(config.warm_start).read_bytes()).hexdigest() if config.warm_start else None
+    signature = hashlib.sha256(json.dumps(dict(config=cfg, split_hash=split_hash, model=name,
+                                              warm_start_sha256=warm_hash),
                                            sort_keys=True).encode()).hexdigest()
     last_path, best_path = out/'last.pt', out/'best.pt'
     if not resume and last_path.exists():
@@ -161,7 +175,12 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     amp = config.amp and device.type == 'cuda'
     loaders, generator = make_loaders(splits, config.batch_size, config.seed, config.image_size,
                                       config.num_workers)
-    model = build_model(name, config.pretrained and not resume).to(device)
+    model = build_model(name, config.pretrained and not resume and not config.warm_start).to(device)
+    if config.warm_start and not resume:
+        warm = torch.load(config.warm_start, map_location='cpu', weights_only=True)
+        if warm['name'] != name or warm['split_hash'] != split_hash:
+            raise ValueError('Warm-start model or patient split differs from this experiment')
+        model.load_state_dict(warm['model'])
     positives = int(splits['train'].target.sum())
     negatives = len(splits['train']) - positives
     if positives == 0 or negatives == 0:
@@ -174,6 +193,12 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     scaler = torch.amp.GradScaler('cuda', enabled=amp, init_scale=config.amp_init_scale)
     optimizer = scheduler = None
     state, history, start, best, waiting, previous_stage = None, [], 0, -float('inf'), 0, None
+    previous_phase = None
+    if diagnostic and not resume:
+        initial_y, initial_scores = predict(model, loaders['val'], device)
+        best = binary_metrics(initial_y, initial_scores, .5)['ap']
+        atomic_save(dict(model=model.state_dict(), config=cfg, name=name, epoch=-1,
+                         validation_ap=best, split_hash=split_hash), best_path)
     if resume:
         # Only load checkpoints produced by this trusted project.
         state = torch.load(last_path, map_location='cpu', weights_only=False)
@@ -184,15 +209,35 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
         model.load_state_dict(state['model'])
         start, history, best, waiting = state['epoch']+1, state['history'], state['best_ap'], state['waiting']
         previous_stage = state['stage']
+        previous_phase = state.get('phase')
     save_json(dict(config=cfg, environment=environment(), model=name, split_hash=split_hash,
                    pos_weight=pos_weight, signature=signature,
+                   warm_start_sha256=warm_hash,
                    parameters=sum(p.numel() for p in model.parameters())), out/'run.json')
     stopped = bool(state and state.get('stopped'))
     for epoch in range(start, config.epochs):
         if stopped:
             break
-        stage = 'head' if name in TRANSFER_MODELS and epoch < config.head_epochs else 'finetune'
-        if optimizer is None or stage != previous_stage:
+        phase = epoch//config.stage_epochs if diagnostic else None
+        stage = (config.unfreeze_schedule[phase] if diagnostic else
+                 ('head' if name in TRANSFER_MODELS and epoch < config.head_epochs else 'finetune'))
+        if diagnostic:
+            configure_stage(model, name, stage)
+            if optimizer is None:
+                optimizer = torch.optim.AdamW(discriminative_groups(model, config.lr,
+                    config.finetune_lr, config.backbone_lr_decay), weight_decay=config.weight_decay)
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=1, factor=.5)
+                if state:
+                    optimizer.load_state_dict(state['optimizer'])
+                    scheduler.load_state_dict(state['scheduler'])
+                    scaler.load_state_dict(state['scaler'])
+            if phase != previous_phase:
+                # Same declared boundaries for every arm; retain Adam moments across unfreezing.
+                for group in optimizer.param_groups:
+                    group['lr'] = group['initial_lr']
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=1, factor=.5)
+                waiting = 0
+        elif optimizer is None or stage != previous_stage:
             configure_stage(model, name, stage)
             lr = config.finetune_lr if name in TRANSFER_MODELS and stage == 'finetune' else config.lr
             optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
@@ -230,7 +275,8 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
         else:
             waiting += 1
         # Do not early-stop before the scheduled fine-tuning phase starts.
-        can_stop = name not in TRANSFER_MODELS or stage == 'finetune'
+        can_stop = ((phase == len(config.unfreeze_schedule)-1) if diagnostic else
+                    (name not in TRANSFER_MODELS or stage == 'finetune'))
         stopped = can_stop and waiting >= config.patience
         history.append(dict(epoch=epoch+1, stage=stage, train_weighted_loss=tr_loss,
                             val_bce=va_loss, val_ap=ap, val_auroc=metrics['auroc'],
@@ -238,11 +284,14 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
                             train_seconds=train_seconds, train_images_per_second=len(splits['train'])/train_seconds,
                             peak_gpu_allocated_mib=(torch.cuda.max_memory_allocated(device)/2**20
                                                     if device.type == 'cuda' else 0.),
+                            phase=phase, trainable_parameters=sum(p.numel() for p in model.parameters() if p.requires_grad),
+                            lr_groups=json.dumps({g.get('group_name', 'all'):g['lr'] for g in optimizer.param_groups}),
                             best=improved))
         pd.DataFrame(history).to_csv(out/'history.csv', index=False)
         atomic_save(dict(model=model.state_dict(), optimizer=optimizer.state_dict(),
                          scheduler=scheduler.state_dict(), scaler=scaler.state_dict(),
                          epoch=epoch, stage=stage, best_ap=best, waiting=waiting,
+                         phase=phase,
                          stopped=stopped, history=history, signature=signature,
                          python_rng=random.getstate(), numpy_rng=np.random.get_state(),
                          torch_rng=torch.get_rng_state(), loader_rng=generator.get_state(),
@@ -251,6 +300,7 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
               f'val_AP={ap:.4f} train={len(splits["train"])/train_seconds:.1f} img/s '
               f'peak_GPU={history[-1]["peak_gpu_allocated_mib"]:.0f} MiB', flush=True)
         previous_stage = stage
+        previous_phase = phase
     best_state = torch.load(best_path, map_location='cpu', weights_only=False)
     model.load_state_dict(best_state['model']); model.to(device).eval()
     y, scores = predict(model, loaders['val'], device)

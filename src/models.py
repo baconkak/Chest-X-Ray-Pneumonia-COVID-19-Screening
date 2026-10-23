@@ -57,19 +57,40 @@ def build_model(name, pretrained=True):
 def configure_stage(model, name, stage):
     for p in model.parameters():
         p.requires_grad = True
-    if stage not in {'head', 'finetune'}:
+    if stage not in {'head', 'finetune', 'layer34', 'all'}:
         raise ValueError(stage)
+    if stage in {'layer34', 'all'} and not name.startswith('resnet'):
+        raise ValueError('Expanded stages currently support ResNet only')
     if name in TRANSFER_MODELS:
         for p in model.parameters():
             p.requires_grad = False
         for p in classifier(model, name).parameters():
             p.requires_grad = True
-        if stage == 'finetune':
+        if stage == 'all':
+            for p in model.parameters():
+                p.requires_grad = True
+        elif stage in {'finetune', 'layer34'}:
             blocks = ([model.layer4] if name.startswith('resnet') else
                       [model.features.denseblock4, model.features.norm5])
+            if stage == 'layer34':
+                blocks += [model.layer3]
             for block in blocks:
                 for p in block.parameters():
                     p.requires_grad = True
+
+
+def discriminative_groups(model, head_lr, backbone_lr, decay=.3):
+    """All parameters registered once; frozen parameters have no gradient/update."""
+    groups = []
+    for label, modules, lr in [
+        ('head', [model.fc], head_lr), ('layer4', [model.layer4], backbone_lr),
+        ('layer3', [model.layer3], backbone_lr*decay),
+        ('layer2', [model.layer2], backbone_lr*decay**2),
+        ('layer1', [model.layer1], backbone_lr*decay**3),
+        ('stem', [model.conv1, model.bn1], backbone_lr*decay**4)]:
+        params = [p for module in modules for p in module.parameters()]
+        groups.append(dict(params=params, lr=lr, initial_lr=lr, group_name=label))
+    return groups
 
 
 def classifier(model, name):

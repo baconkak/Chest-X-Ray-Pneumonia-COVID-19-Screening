@@ -6,6 +6,7 @@ from unittest.mock import patch
 import ast
 import json
 import sys
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -35,6 +36,29 @@ def fixture(root):
 
 
 class PipelineTests(TestCase):
+    def test_sample_metadata_and_download_profile(self):
+        import nbformat
+        with TemporaryDirectory() as temp:
+            root=Path(temp); fixture(root)
+            (root/'Data_Entry_2017.csv').rename(root/'sample_labels.csv')
+            df,audit=read_metadata(root)
+            self.assertEqual(audit['metadata_file'],'sample_labels.csv')
+            self.assertEqual(len(df),120)
+            self.assertTrue(all(f.target.nunique()==2 for f in make_splits(df,root,mode='grouped').values()))
+            notebook=nbformat.read(Path(__file__).resolve().parents[1]/'Chest_Xray_Pneumonia_Colab.ipynb',4)
+            calls=[]
+            fake_hub=SimpleNamespace(dataset_download=lambda handle:(calls.append(handle) or str(root)))
+            context={'Path':Path,'PROFILE':'sample'}
+            with patch.dict(sys.modules,{'kagglehub':fake_hub}), patch('shutil.disk_usage',return_value=SimpleNamespace(free=12*2**30)):
+                exec(notebook.cells[6].source,context)
+            self.assertEqual(calls,['nih-chest-xrays/sample/versions/4'])
+            for profile,free_gib in [('sample',9),('quick',70),('full',70)]:
+                calls.clear()
+                with patch.dict(sys.modules,{'kagglehub':fake_hub}), patch('shutil.disk_usage',return_value=SimpleNamespace(free=free_gib*2**30)):
+                    with self.assertRaises(RuntimeError):
+                        exec(notebook.cells[6].source,{'Path':Path,'PROFILE':profile})
+                self.assertEqual(calls,[])
+
     @skipUnless(torch.cuda.is_available(), 'CUDA GPU unavailable')
     def test_cuda_amp_training(self):
         from src.engine import run_epoch, seed_all
@@ -150,12 +174,13 @@ class PipelineTests(TestCase):
         notebook=nbformat.read(Path(__file__).resolve().parents[1]/'Chest_Xray_Pneumonia_Colab.ipynb',4)
         with TemporaryDirectory() as temp, patch('torch.cuda.is_available',return_value=False), patch.object(plt,'show',side_effect=lambda:plt.close('all')):
             root=Path(temp); fixture(root)
+            (root/'Data_Entry_2017.csv').rename(root/'sample_labels.csv')
             cfg=TrainConfig(epochs=3,head_epochs=1,batch_size=32,image_size=32,
                             pretrained=False,amp=False,patience=10)
             out=root/'results'; out.mkdir()
             context=dict(Path=Path,torch=torch,pd=pd,np=np,CFG=cfg,OUT=out,DATA_ROOT=root,
                          ALLOW_PARTIAL=False,SPLIT_MODE='grouped',MAX_PATIENTS=None,
-                         PROFILE='test',CODE_SHA='synthetic-test',KAGGLE_HANDLE='synthetic-fixture',
+                         PROFILE='sample',CODE_SHA='synthetic-test',KAGGLE_HANDLE='synthetic-fixture',
                          RESUME=False,MODELS=['mlp','small_cnn','resnet18'],
                          display=lambda value:None,save_json=__import__('src.engine',fromlist=['save_json']).save_json)
             for i in [8,10,12,14,16,18]:

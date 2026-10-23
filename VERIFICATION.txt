@@ -1,6 +1,15 @@
 Software verification — 18 October 2026
 ======================================
 
+Update 23 October 2026: verified sample_labels.csv from NIH sample version 4
+(5,606 metadata rows, 62 positive images), one real sample PNG and prospective
+patient-disjoint split support. Added tests for sample metadata and download
+selection/disk checks; the offline notebook workflow now exercises sample mode.
+Result: 8 tests passed, including CUDA AMP, the sample download guard and the
+complete offline notebook workflow. Real sample metadata with seed 42 gives:
+train 3,917 images / 42 positives; validation 826 / 9; test 863 / 11.
+The complete 2.25 GB archive and real-data model training were not run locally.
+
 Command: python -m unittest discover -s tests -v
 Result: 7 tests passed, including CUDA AMP and the offline notebook workflow.
 Tests use generated random PNG images and synthetic metadata, not NIH patient images.

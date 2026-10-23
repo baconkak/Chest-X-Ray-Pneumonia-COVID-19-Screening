@@ -5,6 +5,10 @@
 โปรเจกต์ Deep Learning ปี 3: เปรียบเทียบ **MLP, Small CNN และ ResNet18 transfer learning**
 บน **NIH ChestX-ray14** ตาม dataset ที่อาจารย์ระบุ
 
+**ค่าเริ่มต้นใหม่ 23 ตุลาคม 2569:** ใช้ [NIH Random Sample](https://www.kaggle.com/datasets/nih-chest-xrays/sample)
+จากผู้เผยแพร่เดิม **5,606 ภาพ ประมาณ 2.25 GB** แทนการดาวน์โหลดชุดเต็มประมาณ 42 GB
+ไม่เปลี่ยนโรคหรือแหล่งข้อมูล และยังแบ่งผู้ป่วยแยกกันระหว่าง train/validation/test
+
 **ขอบเขตที่ทำได้:** ทำนายการมี label Pneumonia เทียบกับการไม่มี label นี้
 NIH ChestX-ray14 ไม่มี COVID-19 label จึงยังไม่รองรับการฝึกหรือวัดผล COVID-19
 ชื่อ repository คงตามหัวข้อโครงงาน แต่ไม่อ้างว่าโมเดลนี้ตรวจ COVID-19 ได้
@@ -89,7 +93,12 @@ cell แรกจะนำ source จาก GitHub มาใช้ และพ�
 ผลอยู่ที่ MyDrive/ChestXrayProject/<RUN_NAME>/ ไม่ต้องเก็บ dataset ลง Git
 `USE_DRIVE=False` จะเก็บใน outputs/ ของ runtime ซึ่งหายได้เมื่อ runtime ถูกลบ
 
-`PROFILE="quick"`: เลือกผู้ป่วยสุ่มไม่เกิน 3,000 คน แบ่ง grouped 70/15/15
+`PROFILE="sample"` เป็นค่าเริ่มต้นใหม่ ใช้ชุด NIH Random Sample เวอร์ชัน 4 ทั้ง 5,606 ภาพ
+ดาวน์โหลดประมาณ 2.25 GB และแบ่ง grouped 70/15/15 ตามผู้ป่วย โดยไม่สุ่มตัดเหลือ 3,000 คนอีก
+มี positive Pneumonia เพียง 62 ภาพ จึงต้องอ่าน positive support และช่วงความไม่แน่นอนประกอบ
+เหมาะสำหรับเริ่มทดลอง ไม่ใช่ official benchmark หรือหลักฐานทางคลินิก
+
+`PROFILE="quick"`: เลือกผู้ป่วยสุ่มไม่เกิน 3,000 คนจากชุดเต็ม แบ่ง grouped 70/15/15
 ใช้สำหรับทดลองให้ระบบทำงานก่อน ไม่ใช่ผล official benchmark
 การจำกัดผู้ป่วยไม่ลดขนาดดาวน์โหลด Kagglehub ซึ่งยังดึง dataset เต็ม
 `PROFILE="full"`: ข้อมูลครบ, official test list, แบ่ง val 20% ของ train_val ตามผู้ป่วย
@@ -111,10 +120,11 @@ cell แรกจะนำ source จาก GitHub มาใช้ และพ�
 ผู้ให้ข้อมูลคือ NIH Clinical Center; ดูข้อกำหนด attribution ใน DATA_SOURCES.txt
 
 วิธี A (อัตโนมัติ): `DOWNLOAD_DATA=True` ใน notebook
-ใช้ kagglehub.dataset_download("nih-chest-xrays/data") และบันทึก path/version ที่ได้
-ข้อมูลขนาดหลายสิบ GB ต้องมีพื้นที่เหลือสำหรับ cache และผลการฝึก
-cell จะหยุดถ้าพื้นที่ว่างต่ำกว่า 70 GiB ซึ่งเป็นเพียงเกณฑ์เริ่มต้นโดยประมาณ
-ถ้า dataset อยู่ใน cache แล้วแต่เหลือพื้นที่ไม่ถึงเกณฑ์ ให้ใช้วิธี B ชี้ path cache เดิม
+เมื่อ `PROFILE="sample"` ใช้ `kagglehub.dataset_download("nih-chest-xrays/sample/versions/4")`
+ดาวน์โหลดเฉพาะชุดเล็กและบันทึก path/version ที่ได้ ต้องมีพื้นที่ว่างอย่างน้อย **10 GiB**
+เพื่อเผื่อ archive, ไฟล์ที่แตก และผลการฝึก ไม่ได้หมายความว่า dataset ขนาด 10 GiB
+`quick` และ `full` ยังใช้ชุดเต็มเวอร์ชัน 3 และต้องมีพื้นที่ว่างอย่างน้อย **110 GiB**
+หากไม่มีพื้นที่ให้ใช้ `sample` หรือใช้ไฟล์ที่แตกไว้แล้วผ่านวิธี B
 หาก Kaggle ขอ login ให้ทำตาม https://github.com/Kaggle/kagglehub#authenticate
 ใช้ kagglehub.login() ใน cell ชั่วคราวหรือระบบ Secrets ที่เหมาะสม ไม่เขียน token ลงไฟล์
 ถ้า download ล้มเหลว/มีข้อกำหนดให้ยอมรับ ให้เปิดหน้า dataset ตรวจบัญชีและสิทธิ์ก่อน
@@ -124,6 +134,13 @@ cell จะหยุดถ้าพื้นที่ว่างต่ำกว
 ดาวน์โหลดและแตก archive ทุกชั้นก่อนใช้งาน ไม่ให้เหลือแต่ไฟล์ zip/tar
 ตัวอย่างโครงสร้าง:
 ```text
+nih-sample/
+  sample_labels.csv
+  sample/
+    images/
+      00000013_005.png
+
+# หรือชุดเต็ม
 nih-chestxray14/
   Data_Entry_2017.csv            (หรือ Data_Entry_2017_v2020.csv แต่ต้องมีเพียงหนึ่งไฟล์)
   train_val_list.txt            (จำเป็นสำหรับ full)
@@ -137,6 +154,8 @@ nih-chestxray14/
 ```
 
 ตัวอ่านค้น PNG ใน subfolder ได้ ไม่ต้องย้ายภาพมารวมกัน
+ใช้ `sample_labels.csv` หรือ `Data_Entry_2017*.csv` เพียงหนึ่งไฟล์ใน DATA_ROOT
+sample ต้องมีภาพครบตาม metadata ของชุด sample และไม่ใช้ official test list ของชุดเต็ม
 ถ้ามี PNG ชื่อซ้ำในหลายโฟลเดอร์จะหยุด เพื่อไม่เลือกภาพผิดเงียบ ๆ
 quick ยอมรับบาง archive ได้เมื่อ `ALLOW_PARTIAL=True` และรายงาน missing images
 full จะไม่ยอมรับภาพขาด, official lists ขาด, lists ซ้อนกัน หรือผู้ป่วยข้ามชุด
@@ -146,6 +165,18 @@ full จะไม่ยอมรับภาพขาด, official lists ขา�
 ตั้ง `DOWNLOAD_DATA=False`, `USE_DRIVE=False` และ DATA_ROOT เป็น path ใต้ /kaggle/input ที่เห็นจริง
 ตั้ง OUT ให้อยู่ /kaggle/working เพื่อให้เก็บผลได้ สภาพแวดล้อมนี้ต้องเลือก accelerator ตามที่บัญชีมี
 ไม่ได้รับประกันโควตาหรือ GPU ของ Kaggle; เช็กในหน้าสร้าง notebook ของบัญชีตนเอง
+
+#### หาก Colab เดิมดิสก์เต็มไปแล้ว
+
+1. เก็บไฟล์ผลลัพธ์ที่ต้องการไว้ใน Drive และบันทึก notebook ก่อน
+2. เลือก **Runtime → Disconnect and delete runtime** เพื่อทิ้งดิสก์ชั่วคราวที่เต็ม
+   การกระทำนี้ลบไฟล์ภายใน runtime และไม่ลบไฟล์ที่เก็บไว้ใน Google Drive
+3. เปิด notebook ฉบับล่าสุดจากปุ่ม Open in Colab ด้านบน แล้ว Save a copy in Drive
+4. เชื่อม GPU ใหม่ รันจากต้น ใช้ `PROFILE="sample"` และ `RUN_NAME="nih_sample_seed42_v1"`
+5. ตรวจให้ช่อง Dataset แสดง `nih-chest-xrays/sample/versions/4` ก่อนเริ่มดาวน์โหลด
+
+ห้ามใช้ run/checkpoint เดิมจาก dataset เต็มมารวมกับ sample เพราะ split และข้อมูลต่างกัน
+รายงาน Word ฉบับเดิมอธิบาย quick/full; รายละเอียดโปรไฟล์ sample ที่เพิ่มภายหลังอยู่ในคู่มือส่วนนี้
 
 ### 6. ตรวจข้อมูลก่อนฝึก
 

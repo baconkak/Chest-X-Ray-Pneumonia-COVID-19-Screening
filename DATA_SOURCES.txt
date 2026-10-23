@@ -1,6 +1,15 @@
 Dataset and attribution record (checked 18 October 2026)
 ======================================================
 
+Update 23 October 2026: the default download is the publisher's NIH Random Sample,
+https://www.kaggle.com/datasets/nih-chest-xrays/sample (version 4).
+Kaggle metadata lists 5,606 images and 2,252,611,005 bytes; sample_labels.csv
+was checked directly and contains 5,606 rows with 62 Pneumonia-positive images.
+This is a 5% sample of the same NIH dataset, not a different disease dataset.
+All available sample images are retained, with a grouped patient split.
+Rare positive support limits evaluation precision. Do not compare sample scores
+directly with official full-data benchmarks. Full data mode uses version 3.
+
 Chosen dataset: NIH ChestX-ray14, provided by NIH Clinical Center.
 NIH original download: https://nihcc.app.box.com/v/ChestXray-NIHCC
 Kaggle distribution: https://www.kaggle.com/datasets/nih-chest-xrays/data

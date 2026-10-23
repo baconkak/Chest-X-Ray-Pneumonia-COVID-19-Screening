@@ -17,9 +17,9 @@ LABELS = {'Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration', 'Mass',
 
 def read_metadata(root, allow_partial=False):
     root = Path(root)
-    csvs = sorted(root.rglob('Data_Entry_2017*.csv'))
+    csvs = sorted(set(root.rglob('Data_Entry_2017*.csv')) | set(root.rglob('sample_labels.csv')))
     if len(csvs) != 1:
-        raise ValueError(f'Expected one Data_Entry_2017*.csv; found {len(csvs)} in {root}')
+        raise ValueError(f'Expected one NIH metadata CSV (Data_Entry_2017*.csv or sample_labels.csv); found {len(csvs)} in {root}')
     df = pd.read_csv(csvs[0], dtype={'Patient ID': str})
     required = ['Image Index', 'Finding Labels', 'Patient ID']
     if not set(required) <= set(df.columns) or df[required].isna().any().any():

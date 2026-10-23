@@ -23,7 +23,7 @@ md('''# Chest X-ray: Pneumonia Screening — โปรเจกต์ Deep Learn
 เป็นการทดลองเพื่อการศึกษา ไม่ใช่เครื่องมือวินิจฉัย
 
 Notebook นี้ยังไม่ได้ฝึกกับข้อมูลจริง ไม่มีคะแนนที่แต่งขึ้น: รันเพื่อสร้างผลของคุณเอง
-อ่าน `report_th.txt` สำหรับเหตุผล สูตร และการเชื่อมกับบทเรียนทั้ง 6 บท
+อ่าน `report_th.docx` สำหรับเหตุผล สูตร และการเชื่อมกับบทเรียนทั้ง 6 บท
 
 **ลำดับ**: ตั้ง GPU → ติดตั้ง/เปิดโค้ด → เลือกที่เก็บ checkpoint → ข้อมูล → audit/split →
 ดูภาพ → ทดลอง 3 โมเดล → ล็อกตัวเลือกด้วย validation → เปิด test ครั้งสุดท้าย → อธิบายภาพ
@@ -60,20 +60,22 @@ print("Code commit:", CODE_SHA)
 ''')
 md('''## 2. เก็บผลใน Drive และตั้งการทดลอง
 อนุญาต Drive เมื่อ Colab ถาม เพื่อเก็บ checkpoint ข้าม session
-**quick**: grouped split 70/15/15 ตามผู้ป่วย ใช้ผู้ป่วยสุ่มไม่เกิน 3,000 คนจากข้อมูลที่มี
-การจำกัดผู้ป่วยลดเวลาฝึก แต่ไม่ได้ลดไฟล์ที่ Kagglehub ดาวน์โหลด
+**sample (ค่าเริ่มต้น)**: NIH Random Sample จากผู้เผยแพร่เดิม 5,606 ภาพ ประมาณ 2.25 GB
+ใช้ภาพที่มีทั้งหมด แบ่ง grouped split 70/15/15 ตามผู้ป่วย ไม่ดาวน์โหลดชุดเต็ม
+มี Pneumonia ประมาณ 62 ภาพ จึงต้องดู positive support และความไม่แน่นอนของคะแนน
+**quick**: ชุดเต็มจาก Kaggle แล้วจำกัดผู้ป่วย 3,000 คน ลดเวลาฝึก แต่ไม่ลดขนาดดาวน์โหลด
 **full**: ใช้ข้อมูลครบและ official test list; แบ่ง validation 20% ของ development ตามผู้ป่วย
 
-ค่าเริ่มต้นเป็น quick เพื่อทดสอบระบบก่อน ผล subset เทียบตรงกับ paper ไม่ได้
+ผล sample/quick เทียบตรงกับ official benchmark ไม่ได้
 เริ่มงานใหม่ให้เปลี่ยน RUN_NAME; กลับมางานเดิมให้ใช้ชื่อเดิมและ RESUME=True
 resume ใช้ config/split เดิมทั้งหมด ห้ามเพิ่ม epochs หรือเปลี่ยน hyperparameter ในงานเดิม
 ''')
 code('''USE_DRIVE = True
-PROFILE = "quick"  # "quick" or "full"
-RUN_NAME = "nih_quick_seed42_v1"
+PROFILE = "sample"  # "sample" (small download), "quick", or "full"
+RUN_NAME = "nih_sample_seed42_v1"
 RESUME = False
-if PROFILE not in {"quick", "full"}:
-    raise ValueError("PROFILE must be quick or full")
+if PROFILE not in {"sample", "quick", "full"}:
+    raise ValueError("PROFILE must be sample, quick or full")
 if USE_DRIVE:
     try:
         from google.colab import drive
@@ -85,36 +87,45 @@ OUT = OUTPUT_BASE / RUN_NAME
 OUT.mkdir(parents=True, exist_ok=True)
 from src.engine import TrainConfig, save_json
 CFG = TrainConfig(seed=42, epochs=8, head_epochs=2, batch_size=32)
-SPLIT_MODE = "grouped" if PROFILE == "quick" else "official"
+SPLIT_MODE = "official" if PROFILE == "full" else "grouped"
 MAX_PATIENTS = 3000 if PROFILE == "quick" else None
 ALLOW_PARTIAL = PROFILE == "quick"
 MODELS = ["mlp", "small_cnn", "resnet18"]
 print(OUT)
 ''')
-md('''## 3. ดาวน์โหลด NIH ChestX-ray14 จาก Kaggle หรือใช้ไฟล์ที่แตกไว้แล้ว
+md('''## 3. ดาวน์โหลด NIH ชุดเล็ก หรือใช้ไฟล์ที่มีอยู่
 แหล่งที่อาจารย์ระบุ: [NIH Chest X-rays บน Kaggle](https://www.kaggle.com/datasets/nih-chest-xrays/data)
 หรือ [NIH ต้นฉบับ](https://nihcc.app.box.com/v/ChestXray-NIHCC)
 
-ตัวเลือก A: ตั้ง DOWNLOAD_DATA=True ใช้ Kagglehub ดาวน์โหลด dataset (ขนาดหลายสิบ GB)
-ตรวจพื้นที่ว่างก่อน; ค่า 70 GB เป็นเกณฑ์เริ่มต้นโดยประมาณ ไม่รับประกันว่าจะพอทุก runtime
+ค่าเริ่มต้น PROFILE="sample" ใช้ [NIH Random Sample](https://www.kaggle.com/datasets/nih-chest-xrays/sample)
+เวอร์ชัน 4 ซึ่งมาจากผู้เผยแพร่ NIH เดิม มี 5,606 ภาพและ `sample_labels.csv`
+DOWNLOAD_DATA=True จะดาวน์โหลดเฉพาะชุดนี้ ไม่ดึงชุดเต็ม 42 GB
+ตรวจพื้นที่ว่างอย่างน้อย 10 GiB เพื่อเผื่อ archive, ไฟล์ที่แตก และผลการฝึก
+ถ้าก่อนหน้านี้เจอ No space left on device ให้บันทึก notebook แล้วเลือก
+Runtime → Disconnect and delete runtime เพื่อเริ่มดิสก์ใหม่ จากนั้นรัน notebook ฉบับนี้จากต้น
+อย่ากดลบรันไทม์หากมีไฟล์ผลลัพธ์ที่ยังไม่ได้เก็บไว้ใน Drive
+quick/full เป็นตัวเลือกขั้นสูงที่ดาวน์โหลดเต็ม ต้องว่างอย่างน้อย 110 GiB หรือใช้ไฟล์ที่มีอยู่
 ถ้า authentication ถูกขอ ให้ใช้ `kagglehub.login()` ตามคู่มือ Kaggle; ห้ามใส่ token ลง notebook
 
 ตัวเลือก B: ดาวน์โหลดเองจากแหล่งข้างต้น แตก zip/tar **ก่อน** แล้วตั้ง DATA_ROOT ให้ชี้โฟลเดอร์รวม
-ต้องมี Data_Entry_2017.csv (หรือชื่อ *_v2020.csv) และ PNG ซึ่งอยู่ใน subfolder ได้
+ต้องมี `sample_labels.csv` หรือ `Data_Entry_2017*.csv` เพียงหนึ่งไฟล์ และ PNG ใน subfolder ได้
 full ต้องมี train_val_list.txt และ test_list.txt และภาพครบทั้งหมด
-quick ยอมรับภาพบาง archive ได้ แต่ต้องรายงานว่าเป็น subset และตรวจ class support
+sample ต้องมีภาพครบตาม metadata ของชุด sample; quick ยอมรับบาง archive พร้อมรายงาน missing images
 ถ้าดึงจาก Drive การอ่านภาพทีละไฟล์อาจช้า คัดลอกข้อมูลลง `/content` เมื่อมีพื้นที่เพียงพอ
 ''')
 code('''import shutil
 DOWNLOAD_DATA = True
 DATA_ROOT = Path("/content/nih-chestxray14")  # Used when DOWNLOAD_DATA=False
-KAGGLE_HANDLE = "nih-chest-xrays/data"  # Record resolved version path below.
+KAGGLE_HANDLE = ("nih-chest-xrays/sample/versions/4" if PROFILE == "sample"
+                 else "nih-chest-xrays/data/versions/3")
 if DOWNLOAD_DATA:
     import kagglehub
     free_gb = shutil.disk_usage("/content" if Path("/content").exists() else ".").free / 2**30
     print(f"Free disk: {free_gb:.1f} GiB")
-    if free_gb < 70:
-        raise RuntimeError("Less than 70 GiB free: use an extracted subset with DOWNLOAD_DATA=False or Kaggle Notebook")
+    required_gb = 10 if PROFILE == "sample" else 110
+    if free_gb < required_gb:
+        raise RuntimeError(f"Need {required_gb} GiB free for {PROFILE}. Use a fresh runtime with PROFILE='sample', or existing extracted files with DOWNLOAD_DATA=False.")
+    print("Dataset:", KAGGLE_HANDLE, flush=True)
     DATA_ROOT = Path(kagglehub.dataset_download(KAGGLE_HANDLE))
 if not DATA_ROOT.is_dir():
     raise FileNotFoundError(f"Set DATA_ROOT to the extracted NIH dataset: {DATA_ROOT}")
@@ -133,6 +144,8 @@ code('''from src.data import read_metadata, make_splits, save_splits
 from PIL import Image
 import pandas as pd
 df, audit = read_metadata(DATA_ROOT, allow_partial=ALLOW_PARTIAL)
+if PROFILE == "sample" and audit["metadata_file"] != "sample_labels.csv":
+    raise ValueError("PROFILE='sample' requires NIH sample_labels.csv; use a new run for a different dataset")
 splits = make_splits(df, DATA_ROOT, mode=SPLIT_MODE, seed=CFG.seed, max_patients=MAX_PATIENTS)
 if (OUT / "data_audit.json").exists():
     import json
@@ -314,7 +327,7 @@ md('''## 10. เก็บหลักฐานและเขียนผลจ�
 ทดลองเพิ่มเมื่อมีเวลา: unweighted BCE vs weighted BCE, ResNet random initialization vs pretrained,
 และ seed 43/44 โดยใช้ **split เดิม** (แยก seed split ออกจาก seed training) ก่อนเปิด final test
 สร้าง run แยกและบันทึกแผน อย่าเลือกจาก test แล้ววนปรับ
-อ่านหัวข้อผลทดลองใน `report_th.txt` ซึ่งเว้นไว้สำหรับคะแนนจริง
+อ่านหัวข้อผลทดลองใน `report_th.docx` ซึ่งเว้นไว้สำหรับคะแนนจริง
 
 อ้างอิง: NIH Clinical Center เป็นผู้ให้ข้อมูล; Wang et al., CVPR 2017,
 [ChestX-ray8 / ChestX-ray14 appendix](https://arxiv.org/abs/1705.02315),

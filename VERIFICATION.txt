@@ -38,3 +38,20 @@ Not verified here:
 - Real-data accuracy, AP, recall, calibration, external clinical validity, COVID-19 detection.
 The provided notebook performs those data/training steps in the user's Colab session.
 No dataset, credentials, instructor PDFs, checkpoints or synthetic result files are published.
+
+Larger-model update — 23 October 2026
+-------------------------------------
+12 tests passed in 139.790 seconds after adding ResNet50 and DenseNet121,
+including actual execution of the improved notebook audit/train/selection/test/
+Grad-CAM cells with synthetic PNG data, CUDA AMP updates for both new models,
+head/fine-tune freezing and fixed BatchNorm checks, pixel-identical resized cache,
+cache reuse/corruption repair/source-change invalidation, explicit loss weighting,
+and bitwise-identical CPU interrupted/resumed training with TWO DataLoader workers.
+The original 8 regression tests also pass. These are software checks, not medical
+performance results. No new real-data model performance is claimed.
+New notebook defaults: full NIH official protocol, fixed split seed 42,
+training seed 42, ResNet18 pw10 / ResNet50 pw10 / ResNet50 pw1,
+224px, batch64, workers4, head LR1e-4, fine LR1e-5, 20 epochs maximum,
+head2, patience5, AMP init scale1024, validation AP checkpoint selection.
+DenseNet121, additional weights and repeated seeds are opt-in to control runtime.
+No user result ZIP, private data or weights are added to Git.

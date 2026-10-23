@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch import nn
-from .models import build_model, configure_stage, training_mode
+from .models import build_model, configure_stage, training_mode, TRANSFER_MODELS
 from .data import make_loaders
 from .metrics import choose_threshold, binary_metrics
 
@@ -32,6 +32,10 @@ class TrainConfig:
     pretrained: bool = True
     target_recall: float = .90
     amp: bool = True
+    positive_weight: float | None = None  # None: legacy N_negative / N_positive.
+    num_workers: int = 0
+    amp_init_scale: float = 1024.
+    progress: bool = False
 
 
 def seed_all(seed):
@@ -67,7 +71,7 @@ def predict(model, loader, device):
     model.eval()
     labels, scores = [], []
     for x, y in loader:
-        logits = model(x.to(device))
+        logits = model(x.to(device, non_blocking=True))
         if logits.shape != y.shape or not torch.isfinite(logits).all():
             raise RuntimeError('Invalid model output')
         labels.extend(y.numpy().ravel())
@@ -77,14 +81,19 @@ def predict(model, loader, device):
     return np.asarray(labels), np.asarray(scores)
 
 
-def run_epoch(model, loader, criterion, device, name, optimizer=None, scaler=None, amp=False):
+def run_epoch(model, loader, criterion, device, name, optimizer=None, scaler=None, amp=False,
+              progress=False):
     train = optimizer is not None
     training_mode(model, name) if train else model.eval()
-    total, n, grad_norm, amp_skips, updates = 0., 0, 0., 0, 0
+    total = torch.zeros((), device=device)
+    grad_norm = torch.zeros((), device=device)
+    n, amp_skips, updates = 0, 0, 0
     labels, scores = [], []
+    from tqdm.auto import tqdm
+    batches = tqdm(loader, desc=f'{name} {"train" if train else "val"}', disable=not progress)
     with torch.set_grad_enabled(train):
-        for x, y in loader:
-            x, y = x.to(device), y.to(device)
+        for x, y in batches:
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             if train:
                 optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, enabled=amp):
@@ -110,26 +119,35 @@ def run_epoch(model, loader, criterion, device, name, optimizer=None, scaler=Non
                     if amp_skips > 10:
                         raise RuntimeError('Repeated AMP overflow: inspect data/LR or set amp=False in a new run')
                 else:
-                    grad_norm += float(norm); updates += 1
+                    grad_norm += norm.detach(); updates += 1
                     scaler.step(optimizer); scaler.update()
-                if any(not torch.isfinite(p).all() for p in model.parameters()):
-                    raise RuntimeError('Non-finite parameter after optimizer update')
-            total += float(loss.detach()) * len(y); n += len(y)
-            labels.extend(y.detach().cpu().numpy().ravel())
-            scores.extend(logits.detach().float().sigmoid().cpu().numpy().ravel())
+            total += loss.detach().float() * len(y); n += len(y)
+            # Training predictions are unused; avoid copying every training batch to CPU.
+            if not train:
+                labels.append(y.detach().flatten())
+                scores.append(logits.detach().float().sigmoid().flatten())
+    if train and not torch.stack([torch.isfinite(p).all() for p in model.parameters()]).all():
+        raise RuntimeError('Non-finite parameter after optimizer update')
     if n == 0:
         raise ValueError('Empty loader')
     if train and updates == 0:
         raise RuntimeError('No optimizer updates succeeded; disable AMP in a new run or inspect data')
-    return total/n, np.asarray(labels), np.asarray(scores), grad_norm/max(1, updates), amp_skips
+    labels = torch.cat(labels).cpu().numpy() if labels else np.empty(0)
+    scores = torch.cat(scores).cpu().numpy() if scores else np.empty(0)
+    return float(total)/n, labels, scores, float(grad_norm)/max(1, updates), amp_skips
 
 
 def train_model(name, splits, config, split_hash, out_dir, resume=False):
     cfg = asdict(config)
     if config.epochs < 1 or config.patience < 1:
         raise ValueError('epochs and patience must be positive')
-    if name == 'resnet18' and not 1 <= config.head_epochs < config.epochs:
-        raise ValueError('ResNet needs 1 <= head_epochs < epochs')
+    if name in TRANSFER_MODELS and not 1 <= config.head_epochs < config.epochs:
+        raise ValueError('Transfer learning needs 1 <= head_epochs < epochs')
+    if config.positive_weight is not None and (not config.weighted_loss or
+            not np.isfinite(config.positive_weight) or config.positive_weight <= 0):
+        raise ValueError('positive_weight must be finite, positive and used with weighted_loss=True')
+    if not np.isfinite(config.amp_init_scale) or config.amp_init_scale <= 0:
+        raise ValueError('amp_init_scale must be finite and positive')
     out = Path(out_dir) / name; out.mkdir(parents=True, exist_ok=True)
     signature = hashlib.sha256(json.dumps(dict(config=cfg, split_hash=split_hash, model=name),
                                            sort_keys=True).encode()).hexdigest()
@@ -141,16 +159,19 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     seed_all(config.seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     amp = config.amp and device.type == 'cuda'
-    loaders, generator = make_loaders(splits, config.batch_size, config.seed, config.image_size)
+    loaders, generator = make_loaders(splits, config.batch_size, config.seed, config.image_size,
+                                      config.num_workers)
     model = build_model(name, config.pretrained and not resume).to(device)
     positives = int(splits['train'].target.sum())
     negatives = len(splits['train']) - positives
     if positives == 0 or negatives == 0:
         raise ValueError('Training data requires both classes')
     pos_weight = negatives/positives if config.weighted_loss else 1.
+    if config.positive_weight is not None:
+        pos_weight = config.positive_weight
     train_loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
     val_loss = nn.BCEWithLogitsLoss()  # Comparable unweighted validation data loss
-    scaler = torch.amp.GradScaler('cuda', enabled=amp)
+    scaler = torch.amp.GradScaler('cuda', enabled=amp, init_scale=config.amp_init_scale)
     optimizer = scheduler = None
     state, history, start, best, waiting, previous_stage = None, [], 0, -float('inf'), 0, None
     if resume:
@@ -170,10 +191,10 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
     for epoch in range(start, config.epochs):
         if stopped:
             break
-        stage = 'head' if name == 'resnet18' and epoch < config.head_epochs else 'finetune'
+        stage = 'head' if name in TRANSFER_MODELS and epoch < config.head_epochs else 'finetune'
         if optimizer is None or stage != previous_stage:
             configure_stage(model, name, stage)
-            lr = config.finetune_lr if name == 'resnet18' and stage == 'finetune' else config.lr
+            lr = config.finetune_lr if name in TRANSFER_MODELS and stage == 'finetune' else config.lr
             optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
                                           lr=lr, weight_decay=config.weight_decay)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=1, factor=.5)
@@ -190,10 +211,14 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
                 torch.cuda.set_rng_state_all(state['cuda_rng'])
             generator.set_state(state['loader_rng']); state = None
         before = time.perf_counter()
+        if device.type == 'cuda':
+            torch.cuda.reset_peak_memory_stats(device)
         lr_used = optimizer.param_groups[0]['lr']
         tr_loss, _, _, grad, amp_skips = run_epoch(model, loaders['train'], train_loss, device, name,
-                                       optimizer, scaler, amp)
-        va_loss, y, scores, _, _ = run_epoch(model, loaders['val'], val_loss, device, name)
+                                       optimizer, scaler, amp, progress=config.progress)
+        train_seconds = time.perf_counter()-before
+        va_loss, y, scores, _, _ = run_epoch(model, loaders['val'], val_loss, device, name,
+                                             progress=config.progress)
         metrics = binary_metrics(y, scores, .5)
         ap = metrics['ap']
         scheduler.step(ap)
@@ -205,11 +230,14 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
         else:
             waiting += 1
         # Do not early-stop before the scheduled fine-tuning phase starts.
-        can_stop = name != 'resnet18' or stage == 'finetune'
+        can_stop = name not in TRANSFER_MODELS or stage == 'finetune'
         stopped = can_stop and waiting >= config.patience
         history.append(dict(epoch=epoch+1, stage=stage, train_weighted_loss=tr_loss,
                             val_bce=va_loss, val_ap=ap, val_auroc=metrics['auroc'],
                             grad_norm=grad, amp_skipped_steps=amp_skips, lr=lr_used, seconds=time.perf_counter()-before,
+                            train_seconds=train_seconds, train_images_per_second=len(splits['train'])/train_seconds,
+                            peak_gpu_allocated_mib=(torch.cuda.max_memory_allocated(device)/2**20
+                                                    if device.type == 'cuda' else 0.),
                             best=improved))
         pd.DataFrame(history).to_csv(out/'history.csv', index=False)
         atomic_save(dict(model=model.state_dict(), optimizer=optimizer.state_dict(),
@@ -219,7 +247,9 @@ def train_model(name, splits, config, split_hash, out_dir, resume=False):
                          python_rng=random.getstate(), numpy_rng=np.random.get_state(),
                          torch_rng=torch.get_rng_state(), loader_rng=generator.get_state(),
                          cuda_rng=torch.cuda.get_rng_state_all() if device.type == 'cuda' else None), last_path)
-        print(f'{name} epoch={epoch+1} stage={stage} train={tr_loss:.4f} val_BCE={va_loss:.4f} val_AP={ap:.4f}', flush=True)
+        print(f'{name} epoch={epoch+1} stage={stage} train={tr_loss:.4f} val_BCE={va_loss:.4f} '
+              f'val_AP={ap:.4f} train={len(splits["train"])/train_seconds:.1f} img/s '
+              f'peak_GPU={history[-1]["peak_gpu_allocated_mib"]:.0f} MiB', flush=True)
         previous_stage = stage
     best_state = torch.load(best_path, map_location='cpu', weights_only=False)
     model.load_state_dict(best_state['model']); model.to(device).eval()

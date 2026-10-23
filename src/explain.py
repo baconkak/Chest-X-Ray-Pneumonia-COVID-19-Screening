@@ -2,10 +2,11 @@ import numpy as np
 import torch
 
 
-def grad_cam_resnet(model, x):
+def grad_cam(model, x):
     """Positive-logit Grad-CAM. A visualization, not a lesion annotation."""
     activations = []
-    handle = model.layer4.register_forward_hook(lambda module, args, output: activations.append(output))
+    layer = model.layer4 if hasattr(model, 'layer4') else model.features.norm5
+    handle = layer.register_forward_hook(lambda module, args, output: activations.append(output))
     try:
         model.eval(); model.zero_grad(set_to_none=True)
         x = x.detach().requires_grad_(True)
@@ -20,3 +21,6 @@ def grad_cam_resnet(model, x):
         return cam.detach().cpu().numpy()
     finally:
         handle.remove()
+
+
+grad_cam_resnet = grad_cam  # Backward compatibility with the original notebook.

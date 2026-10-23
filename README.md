@@ -1,5 +1,12 @@
 # Chest X-ray Pneumonia & COVID-19 Screening — educational project
 
+[![Improved notebook on Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/baconkak/Chest-X-Ray-Pneumonia-COVID-19-Screening/blob/main/Chest_Xray_Improved_Colab.ipynb)
+
+**รุ่นปรับปรุง 23 ตุลาคม 2026:** เริ่มที่ [Chest_Xray_Improved_Colab.ipynb](Chest_Xray_Improved_Colab.ipynb)
+สำหรับ **ResNet50 pretrained + ข้อมูล NIH ครบ + cache ภาพ + การทดลองน้ำหนัก loss**
+คู่มือด้านล่างหัวข้อ “รุ่นปรับปรุงสำหรับ L4” อธิบายค่าตั้ง เหตุผล และตำแหน่งผลลัพธ์
+Notebook เดิมด้านล่างเก็บไว้สำหรับ baseline ตามบทเรียนและการทดลอง quick
+
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/baconkak/Chest-X-Ray-Pneumonia-COVID-19-Screening/blob/main/Chest_Xray_Pneumonia_Colab.ipynb)
 
 โปรเจกต์ Deep Learning ปี 3: เปรียบเทียบ **MLP, Small CNN และ ResNet18 transfer learning**
@@ -24,7 +31,8 @@ NIH ChestX-ray14 ไม่มี COVID-19 label จึงยังไม่ร�
 - `tests/`: ทดสอบด้วยข้อมูลสังเคราะห์ ไม่ใช่ผลประเมินทางการแพทย์
 - `requirements.txt`: dependency ranges; notebook เก็บรุ่นจริงใน environment_freeze.txt
 
-ยังไม่มีผลฝึกจาก dataset จริงหรือ checkpoint ที่ผ่านการประเมิน คะแนนจะถูกสร้างเมื่อผู้ใช้รัน notebook
+ผล quick ที่ผู้ใช้ส่งมาผ่านการตรวจแล้ว แต่ยังไม่มี final test และยังไม่ได้ฝึกรุ่นปรับปรุงนี้
+คะแนนของรุ่นปรับปรุงจะเกิดเมื่อรัน notebook; ไม่รับประกันว่าเพิ่มขนาดโมเดลแล้วคะแนนจะสูงขึ้น
 ใช้เพื่อการศึกษาเท่านั้น
 
 Data provider: **NIH Clinical Center**.
@@ -292,3 +300,102 @@ tests ใช้ข้อมูลสังเคราะห์เพื่อ�
 - **Download ต้อง login:** เปิด dataset และทำตามระบบของ Kaggle ไม่เก็บ token ใน Git
 
 อ่านเพิ่มเติม: [Colab FAQ](https://research.google.com/colaboratory/faq.html)
+
+## รุ่นปรับปรุงสำหรับ L4
+
+### เหตุผลที่เปลี่ยน
+
+จากผล `nih_quick_seed42_v1` ที่ผู้ใช้ส่งมา ResNet18 มี validation AP ประมาณ 0.0896,
+AUROC ประมาณ 0.6762 และเมื่อเลือก threshold ให้ recall อย่างน้อย 0.90 ได้ TP=15, FN=1,
+FP=1,069, TN=594 จาก validation 1,679 ภาพ ซึ่งมี positive เพียง 16 ภาพ
+จึงยังสรุปไม่ได้ว่าใช้งานคัดกรองจริงได้ และยังไม่มี final test ในชุดไฟล์นั้น
+รอบ quick มี training positive เพียง 64 ภาพและ `pos_weight` ประมาณ 112.19
+
+การปรับครั้งนี้เป็นสมมติฐานที่ต้องทดสอบ ไม่ใช่ผลรับประกันว่า accuracy/AP จะสูงขึ้น:
+
+| เปลี่ยนอะไร | เหตุผลและวิธีตรวจ |
+| --- | --- |
+| เพิ่ม ResNet50 pretrained | ประมาณ 23,510,081 พารามิเตอร์หลังเปลี่ยนหัวเป็นหนึ่ง logit เทียบ ResNet18 11,177,025; เพิ่มความสามารถเรียนรู้ feature แต่เสี่ยง overfit จึงเทียบใน split เดียวกัน |
+| เพิ่ม DenseNet121 เป็นตัวเลือก | 6,954,881 พารามิเตอร์หลังเปลี่ยนหัว; เชื่อม feature ข้ามชั้น ลึกกว่าแต่พารามิเตอร์น้อยกว่า ResNet18 ไม่อ้างว่าเป็นโมเดลใหญ่กว่า |
+| ใช้ PROFILE="full" | ใช้ภาพและผู้ป่วยทั้งหมดที่ผ่าน audit เพิ่มจำนวน positive จริง ไม่สร้างภาพซ้ำเพื่ออ้างว่าเพิ่มข้อมูล; official test list คงไว้ และแยก validation ตามผู้ป่วย |
+| LR หัว 1e-4 / fine-tune 1e-5 | ลดจาก quick เดิม 1e-3 / 1e-4 เพื่อลดการเปลี่ยนน้ำหนักรุนแรง; ใช้ scheduler ลด LR เมื่อ validation AP ไม่ดีขึ้น |
+| Loss weights 10 กับ 1 | เทียบ weighted BCE ระดับปานกลางกับ BCE ปกติ แทนการยึดอัตราส่วน 112 เป็นคำตอบ; เลือกด้วย validation เท่านั้น |
+| ทดลอง weights 30 และ auto ได้ | เปิด RUN_EXTRA_ABLATIONS=True ก่อนเริ่ม run ใหม่; auto คำนวณจาก train ของรอบ full จริง ไม่ใช้ 112 จาก quick ค้างไว้ |
+| Cache pad+resize RGB 224 | ย่อภาพต้นฉบับครั้งเดียวลง local disk แบบ PNG ก่อน random affine; ไม่ cache augmentation ลดการถอดภาพใหญ่ซ้ำทุก epoch |
+| 4 workers / pinned memory / non-blocking transfer | ให้ CPU เตรียมภาพหลายชุดล่วงหน้า; เอาการคัดลอก prediction ของ train ที่ไม่ได้ใช้และการตรวจพารามิเตอร์ทีละตัวทุก batch ออก เหลือตรวจ loss/grad ทุก batch และพารามิเตอร์ท้าย epoch |
+| Batch 64 / AMP scale 1024 | ค่าเริ่มต้นสำหรับ L4 224 px; ลด overflow ตอนเริ่มเมื่อเทียบกับ scale 65,536 และบันทึกจำนวน update ที่ข้าม ไม่มีการซ่อน non-finite loss |
+| 20 epochs / patience 5 | ให้ fine-tune มีโอกาสเรียนรู้มากขึ้นโดยเลือก best checkpoint จาก validation AP; อาจหยุดก่อนครบและไม่ได้เลือก epoch ล่าสุดอัตโนมัติ |
+| Seeds 42/43/44 เป็นตัวเลือก | SPLIT_SEED=42 คงเดิม เปลี่ยนเฉพาะ training seed; เลือก experiment ด้วย mean AP และใช้ seed แรกที่ประกาศ ไม่เลือก seed ที่คะแนนดีที่สุด |
+
+ResNet50 ใช้ ImageNet IMAGENET1K_V2; ResNet18 และ DenseNet121 ใช้ IMAGENET1K_V1
+pretraining คนละ recipe จึงเป็นการเปรียบเทียบ pipeline ที่ใช้งานจริง ไม่ใช่การแยกผลของสถาปัตยกรรมอย่างเดียว
+ภาพใช้ padding รักษาขอบเขตภาพแทน center crop ของ ImageNet เพราะไม่ต้องการตัดส่วนของทรวงอกออก
+ไม่มีหลักฐานว่าการใช้ normalization จาก ImageNet เหมาะที่สุดกับ NIH; เป็นค่าคงที่ที่ใช้เริ่ม transfer learning
+ฝึกหัว 2 epochs แล้วเปิด layer4 ของ ResNet หรือ denseblock4 และ norm5 ของ DenseNet
+คงสถิติ BatchNorm จาก pretrained, dropout 0.3, AdamW, weight decay 1e-4 และ clip norm 5
+
+### Loss และเกณฑ์ตัดสิน
+
+ยังใช้ `BCEWithLogitsLoss` เพราะทำนาย label เดียวแบบ binary ด้วยหนึ่ง logit
+loss รับ logit โดยตรงและรวม sigmoid อย่างเสถียรทางตัวเลข ไม่ใส่ sigmoid ก่อน loss
+CrossEntropyLoss เหมาะกับการจัดคลาสแบบเลือกหนึ่งจากหลายคลาส แต่ไม่จำเป็นสำหรับหัวหนึ่ง logit นี้
+`positive_weight=1` เท่ากับ BCE ไม่ถ่วงน้ำหนัก; ค่ามากขึ้นเพิ่มโทษเมื่อพลาด positive
+ไม่ใช้ oversampling ร่วมด้วยเพื่อไม่เพิ่มผลของ class imbalance ซ้ำ
+weighted score ต้องประเมิน calibration ไม่ตีความเป็นโอกาสป่วยทางคลินิกโดยตรง
+
+ไฟล์ `validation_operating_points.csv` เปรียบเทียบ threshold ที่เลือกจาก validation
+สำหรับ recall เป้าหมาย 0.50, 0.80, 0.90 และ threshold คงที่ 0.5 เพื่อให้เห็น false positives
+เกณฑ์หลักยังเป็น precision สูงสุดภายใต้ validation recall อย่างน้อย 0.90
+ไม่เปลี่ยนเกณฑ์อัตโนมัติหลังเห็น test และ test recall ไม่รับประกันว่าจะถึง 0.90
+ใช้ AP เป็นเกณฑ์จัดอันดับหลักร่วมกับ precision/recall/specificity และจำนวน FP/FN
+accuracy สูงมากอาจเกิดจากทายลบทุกภาพได้เพราะ positive มีน้อย
+
+### เปิดและรัน
+
+1. เปิด [notebook รุ่นปรับปรุงบน Colab](https://colab.research.google.com/github/baconkak/Chest-X-Ray-Pneumonia-COVID-19-Screening/blob/main/Chest_Xray_Improved_Colab.ipynb) แล้ว Save a copy in Drive
+2. Runtime → Change runtime type → L4 GPU แล้วตรวจผลชื่อ GPU จาก cell แรก
+3. ค่าเริ่มต้น RUN_NAME="nih_full_resnet50_v3", batch=64, workers=4, full data และ 3 trials
+4. Drive ต้องเป็นบัญชีที่ต้องการเก็บผล อนุญาตการเชื่อม Drive เมื่อ Colab ถาม
+5. Run all ตามลำดับ โค้ด clone ลง `/content/chest-xray-improved` และ fetch CODE_REF ป้องกันใช้ src รุ่นเก่าค้างจาก notebook เดิม
+6. ถ้าข้อมูลชุดเต็มที่แตกเสร็จอยู่ใน Kagglehub cache ของ runtime นี้ จะใช้ต่อ; ถ้า runtime ใหม่ต้องดาวน์โหลดและแตกใหม่
+7. audit ทุกภาพ ตรวจ patient leakage แล้วสร้าง cache ภาพเล็กใน `/content/nih_cache`; ต้นฉบับไม่ถูกลบ
+8. การฝึกแสดง progress bar, img/s และ peak GPU memory แต่ละ epoch; ใช้ความเร็วจริงประมาณเวลาที่เหลือ อย่าใช้ปริมาณ GPU RAM อย่างเดียวตัดสินว่าฝึกเร็วหรือช้า
+9. หลังครบ trials จะสรุป validation และล็อกตัวเลือก `RUN_FINAL_TEST=False` ตามค่าเริ่มต้น จึงยังไม่เปิด test
+10. เมื่อยุติการปรับโมเดลค่อยเปิด final test เพื่อรายงานผล; sentinel ป้องกันฝึกซ้ำใน run เดิมหลังเปิด test
+
+งาน full มีภาพมากกว่า quick อย่างชัดเจน แม้ pipeline เร็วขึ้น เวลาฝึกทั้งงานอาจเพิ่มขึ้น
+แต่ละ trial สูงสุด 20 epochs; จำนวนรวมค่าเริ่มต้นสูงสุด 60 epochs ก่อน early stopping
+RUN_DENSENET และ RUN_EXTRA_ABLATIONS เพิ่มเวลา; seeds 3 ตัวเพิ่มงานเป็น 3 เท่า
+ค่าใหม่ไม่ใช่การจอง L4 เสมอไป ขึ้นกับทรัพยากรของ Colab ในขณะนั้น
+ถ้า CUDA out of memory ให้เริ่มชื่อ run ใหม่และลด batch เป็น 32 ไม่เปลี่ยน batch แล้ว resume checkpoint ที่ config ต่างกัน
+
+### ผลลัพธ์และการกลับมาฝึกต่อ
+
+ผลอยู่ `MyDrive/ChestXrayProject/nih_full_resnet50_v3/`:
+
+- `experiment_plan.json`: แผน config, seeds, loss weights และ split hash
+- `data_audit.json`, `splits/`: จำนวนภาพ/positive และหลักฐานไม่มีผู้ป่วยข้ามชุด
+- `validation_comparison.csv`: metrics ของทุก trial
+- `validation_seed_summary.csv`: mean/std AP ข้าม seeds; std ว่างเมื่อมี seed เดียว
+- `validation_operating_points.csv`: precision/recall/FP/FN หลายเกณฑ์จาก validation
+- `<experiment>_seed42/<model>/`: `run.json`, `history.csv`, `learning_curves.png`, `best.pt`, `last.pt`, `validation.json`, `val_predictions.csv`
+- `locked_selection.json`: trial, model และ threshold ที่เลือก
+- `final_test/`: เกิดเมื่อเปิด final test พร้อม predictions, error review, plots, comparison และ paired patient bootstrap AP
+
+ตัวอย่าง checkpoint: `resnet50_pw10_seed42/resnet50/best.pt`
+checkpoint รุ่นนี้มี config ใหม่ ไม่ resume ต่อจาก `nih_quick_seed42_v1`
+ถ้าจะกลับไปใช้ checkpoint เก่า ให้ใช้ code commit ที่เก็บใน `run.json` ของงานเก่านั้น
+resume รุ่นใหม่ใช้ RUN_NAME และ config เดิมทุกค่า พร้อม `RESUME=True`
+รองรับขอบ epoch; หากหลุดกลาง epoch จะฝึก epoch นั้นใหม่
+workers ไม่ persistent เพื่อให้ state ของ generator และ RNG ที่ checkpoint ไว้ทำซ้ำ augmentation เมื่อ resume ได้
+ไม่รับประกัน bitwise equality ข้าม GPU, CUDA หรือรุ่นไลบรารีต่างกัน
+
+การเปลี่ยน quick เป็น full เปลี่ยนกลุ่มผู้ป่วยและ validation จึงไม่เปรียบเทียบ AP กับ 0.0896 ตรง ๆ
+ให้เปรียบเทียบ ResNet18 baseline กับ ResNet50 ภายในรอบ full เดียวกัน
+ผล bootstrap และ seeds ควรประกอบการสรุป ไม่อ้างว่าดีขึ้นอย่างมีนัยสำคัญจากคะแนนจุดเดียว
+รุ่นนี้ยังเป็น Pneumonia label present/absent ไม่มี COVID-19 label และไม่ใช่ระบบวินิจฉัย
+
+อ้างอิงวิธีและ API: [ResNet50](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.resnet50.html),
+[DenseNet121](https://docs.pytorch.org/vision/stable/models/generated/torchvision.models.densenet121.html),
+[DataLoader](https://docs.pytorch.org/docs/stable/data.html),
+[BCEWithLogitsLoss](https://docs.pytorch.org/docs/stable/generated/torch.nn.BCEWithLogitsLoss.html)

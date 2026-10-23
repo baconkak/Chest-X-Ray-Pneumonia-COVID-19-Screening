@@ -2,6 +2,8 @@
 from pathlib import Path
 import hashlib
 import json
+import random
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 import torch
@@ -127,7 +129,7 @@ def save_splits(splits, out):
 
 def transforms(train=False, size=224):
     # Preserve the full field of view with padding; no random crop or left/right flip.
-    ops = [T.Lambda(lambda im: _pad_square(im)), T.Resize((size, size))]
+    ops = [_pad_square, T.Resize((size, size))]
     if train:
         ops += [T.RandomAffine(degrees=5, translate=(0.02, 0.02), fill=0)]
     return T.Compose(ops + [T.ToTensor(), T.Normalize([.485, .456, .406], [.229, .224, .225])])
@@ -142,23 +144,75 @@ def _pad_square(im):
 class ChestDataset(Dataset):
     def __init__(self, frame, train=False, size=224):
         self.frame = frame.reset_index(drop=True)
+        self.paths = self.frame.path.tolist()
+        self.targets = self.frame.target.to_numpy(dtype=np.float32)
         self.transform = transforms(train, size)
 
     def __len__(self):
         return len(self.frame)
 
     def __getitem__(self, index):
-        row = self.frame.iloc[index]
-        with Image.open(row.path) as im:
+        with Image.open(self.paths[index]) as im:
             x = self.transform(im.convert('RGB'))
-        return x, torch.tensor([row.target], dtype=torch.float32)
+        return x, torch.tensor([self.targets[index]], dtype=torch.float32)
 
 
-def make_loaders(splits, batch_size=32, seed=42, size=224):
-    # workers=0 lets checkpointed Python/Torch RNG reproduce epoch-boundary data order.
+def _seed_worker(worker_id):
+    seed = torch.initial_seed() % 2**32
+    np.random.seed(seed)
+    random.seed(seed)
+
+
+def make_loaders(splits, batch_size=32, seed=42, size=224, num_workers=0):
+    if num_workers < 0:
+        raise ValueError('num_workers must be nonnegative')
+    # Recreate workers each epoch so saved generator state also restores augmentation RNG.
+    # Persistent workers would keep hidden RNG state across epochs and break exact resume.
     generator = torch.Generator().manual_seed(seed)
     loaders = {name: DataLoader(ChestDataset(frame, name == 'train', size),
-                   batch_size=batch_size, shuffle=name == 'train', num_workers=0,
+                   batch_size=batch_size, shuffle=name == 'train', num_workers=num_workers,
+                   worker_init_fn=_seed_worker, persistent_workers=False,
                    pin_memory=torch.cuda.is_available(), generator=generator if name == 'train' else None)
                for name, frame in splits.items()}
     return loaders, generator
+
+
+def prepare_image_cache(frame, cache_dir, size=224, workers=4):
+    """Cache only deterministic RGB padding/resize, before random augmentation.
+
+    Original image files remain untouched. Source path/size/mtime plus transform version
+    identify entries; changed sources create new entries. Pixel operations do not fit labels
+    or population statistics, so the same fixed transform is valid on held-out images.
+    """
+    if size < 1 or workers < 1 or frame['Image Index'].duplicated().any():
+        raise ValueError('Invalid cache size/workers or duplicate image IDs')
+    cache_dir = Path(cache_dir) / f'rgb_pad_resize_v1_{size}'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    resize = T.Resize((size, size))
+
+    def convert(source):
+        source = Path(source)
+        stat = source.stat()
+        key = hashlib.sha256(f'{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}'.encode()).hexdigest()
+        dest = cache_dir / f'{key}.png'
+        if dest.exists():
+            try:
+                with Image.open(dest) as im:
+                    if im.size != (size, size) or im.mode != 'RGB':
+                        raise ValueError('Invalid cached image')
+                    im.verify()
+                return str(dest.resolve())
+            except (OSError, ValueError, SyntaxError):
+                pass  # An interrupted/corrupt cache entry can be rebuilt from the source.
+        with Image.open(source) as im:
+            image = resize(_pad_square(im.convert('RGB')))
+            temporary = dest.with_suffix('.tmp')
+            image.save(temporary, format='PNG')
+            temporary.replace(dest)
+        return str(dest.resolve())
+
+    from tqdm.auto import tqdm
+    result = frame.copy()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        result['path'] = list(tqdm(pool.map(convert, frame.path), total=len(frame), desc='Cache resized images'))
+    return result

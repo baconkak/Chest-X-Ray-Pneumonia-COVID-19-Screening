@@ -1,6 +1,9 @@
 import torch
 from torch import nn
-from torchvision.models import resnet18, ResNet18_Weights
+from torchvision.models import (resnet18, ResNet18_Weights, resnet50, ResNet50_Weights,
+                                densenet121, DenseNet121_Weights)
+
+TRANSFER_MODELS = {'resnet18', 'resnet50', 'densenet121'}
 
 
 class MLP(nn.Module):
@@ -38,9 +41,15 @@ def build_model(name, pretrained=True):
         return MLP()
     if name == 'small_cnn':
         return SmallCNN()
-    if name == 'resnet18':
-        model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
+    if name in {'resnet18', 'resnet50'}:
+        builder, weights = ((resnet18, ResNet18_Weights.IMAGENET1K_V1) if name == 'resnet18'
+                            else (resnet50, ResNet50_Weights.IMAGENET1K_V2))
+        model = builder(weights=weights if pretrained else None)
         model.fc = nn.Sequential(nn.Dropout(.3), nn.Linear(model.fc.in_features, 1))
+        return model
+    if name == 'densenet121':
+        model = densenet121(weights=DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None)
+        model.classifier = nn.Sequential(nn.Dropout(.3), nn.Linear(model.classifier.in_features, 1))
         return model
     raise ValueError(name)
 
@@ -48,20 +57,29 @@ def build_model(name, pretrained=True):
 def configure_stage(model, name, stage):
     for p in model.parameters():
         p.requires_grad = True
-    if name == 'resnet18':
+    if stage not in {'head', 'finetune'}:
+        raise ValueError(stage)
+    if name in TRANSFER_MODELS:
         for p in model.parameters():
             p.requires_grad = False
-        for p in model.fc.parameters():
+        for p in classifier(model, name).parameters():
             p.requires_grad = True
         if stage == 'finetune':
-            for p in model.layer4.parameters():
-                p.requires_grad = True
+            blocks = ([model.layer4] if name.startswith('resnet') else
+                      [model.features.denseblock4, model.features.norm5])
+            for block in blocks:
+                for p in block.parameters():
+                    p.requires_grad = True
+
+
+def classifier(model, name):
+    return model.classifier if name == 'densenet121' else model.fc
 
 
 def training_mode(model, name):
     model.train()
-    if name == 'resnet18':
-        # Keep pretrained BN statistics fixed, including during layer4 fine-tuning.
+    if name in TRANSFER_MODELS:
+        # Keep pretrained BN statistics fixed during both training stages.
         for module in model.modules():
             if isinstance(module, nn.BatchNorm2d):
                 module.eval()
